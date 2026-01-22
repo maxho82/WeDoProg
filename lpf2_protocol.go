@@ -10,11 +10,11 @@ const (
 	WEDO2_SPECIFIC_SERVICE_UUID = "5833ff01-9b8b-5191-6142-22a4536ef123"
 
 	// Характеристики
-	SENSOR_VALUES_UUID     = "00001560-1212-efde-1523-785feabcd123" // Значения сенсоров
-	PORT_INFO_UUID         = "00001527-1212-efde-1523-785feabcd123" // Информация о портах
-	INPUT_COMMAND_UUID     = "00001563-1212-efde-1523-785feabcd123" // Команды настройки
-	OUTPUT_COMMAND_UUID    = "00001565-1212-efde-1523-785feabcd123" // Команды управления
-	PORT_NOTIFICATION_UUID = "00001524-1212-efde-1523-785feabcd123" // Уведомления портов
+	SENSOR_VALUES_UUID  = "00001560-1212-efde-1523-785feabcd123" // Значения сенсоров
+	PORT_INFO_UUID      = "00001527-1212-efde-1523-785feabcd123" // Информация о портах
+	INPUT_COMMAND_UUID  = "00001563-1212-efde-1523-785feabcd123" // Команды настройки
+	OUTPUT_COMMAND_UUID = "00001565-1212-efde-1523-785feabcd123" // Команды управления
+	NAME_UUID           = "00001524-1212-efde-1523-785feabcd123" // Уведомления портов
 
 	// Информация об устройстве
 	MANUFACTURER_NAME_UUID = "00002a29-0000-1000-8000-00805f9b34fb"

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // hexStringToBytes преобразует hex строку в байты
@@ -47,6 +48,17 @@ func bytesToHexString(data []byte) string {
 	}
 
 	return strings.Join(hexStr, " ")
+}
+
+// bytesToStringSafe безопасно преобразует байты в строку
+func bytesToStringSafe(data []byte) string {
+	// Проверяем, можно ли преобразовать в UTF-8
+	if utf8.Valid(data) {
+		return strings.TrimSpace(string(data))
+	}
+
+	// Если не UTF-8, возвращаем hex представление
+	return bytesToHexString(data)
 }
 
 // formatBatteryLevel форматирует уровень батареи

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image/color"
+	"log"
 	"strings"
 	"time"
 
@@ -368,6 +369,7 @@ func (gui *MainGUI) showHubDiscoveryDialog() {
 }
 
 // connectToHub подключается к указанному хабу
+// connectToHub подключается к указанному хабу
 func (gui *MainGUI) connectToHub(address string) {
 	progress := dialog.NewProgressInfinite("Подключение", "Подключение к хабу...", gui.window)
 	progress.Show()
@@ -383,6 +385,16 @@ func (gui *MainGUI) connectToHub(address string) {
 			} else {
 				gui.updateConnectionStatus(true)
 				dialog.ShowInformation("Успешно", "Подключение установлено!", gui.window)
+
+				// Запускаем обнаружение портов через 3 секунды
+				go func() {
+					time.Sleep(3 * time.Second)
+					log.Println("Запуск обнаружения портов...")
+
+					// Создаем объект обнаружения портов
+					portDiscovery := NewPortDiscovery(gui.hubMgr)
+					portDiscovery.DiscoverPorts()
+				}()
 			}
 		})
 	}()
@@ -434,9 +446,14 @@ func (gui *MainGUI) UpdateHubInfoDisplay(info *HubInfo) {
 
 // UpdateDeviceDisplay обновляет отображение устройств
 func (gui *MainGUI) UpdateDeviceDisplay(portID byte, device *Device) {
+	log.Printf("UpdateDeviceDisplay вызван: порт %d, устройство: %s, подключено: %v",
+		portID, device.Name, device.IsConnected)
+
 	fyne.Do(func() {
 		// Сохраняем устройство
 		gui.connectedDevices[portID] = device
+
+		log.Printf("Устройство сохранено. Всего устройств: %d", len(gui.connectedDevices))
 
 		// Обновляем доступные блоки
 		gui.updateAvailableBlocks()
@@ -480,6 +497,25 @@ func (gui *MainGUI) createDevicePanel() *container.Scroll {
 
 	gui.devicesContainer = container.NewVBox()
 	mainContainer.Add(gui.devicesContainer)
+
+	// Кнопка для ручного обнаружения устройств
+	if gui.hubMgr.IsConnected() {
+		discoverButton := widget.NewButton("Обнаружить устройства", func() {
+			portDiscovery := NewPortDiscovery(gui.hubMgr)
+			portDiscovery.DiscoverPorts()
+
+			// Обновляем список устройств через 2 секунды
+			go func() {
+				time.Sleep(2 * time.Second)
+				fyne.Do(func() {
+					gui.updateDeviceList()
+				})
+			}()
+		})
+		discoverButton.Importance = widget.LowImportance
+		mainContainer.Add(discoverButton)
+		mainContainer.Add(widget.NewSeparator())
+	}
 
 	return container.NewVScroll(container.NewPadded(mainContainer))
 }
@@ -554,8 +590,11 @@ func (gui *MainGUI) updateHubInfoUI(info *HubInfo) {
 // updateDeviceList обновляет список устройств
 func (gui *MainGUI) updateDeviceList() {
 	if gui.devicesContainer == nil {
+		log.Println("ERROR: devicesContainer равен nil!")
 		return
 	}
+
+	log.Printf("Обновление списка устройств. Всего: %d", len(gui.connectedDevices))
 
 	gui.devicesContainer.Objects = nil
 
@@ -565,15 +604,26 @@ func (gui *MainGUI) updateDeviceList() {
 		noDevicesLabel.TextStyle.Italic = true
 		gui.devicesContainer.Add(noDevicesLabel)
 	} else {
+		connectedCount := 0
 		for portID, device := range gui.connectedDevices {
 			if device.IsConnected {
+				connectedCount++
 				deviceCard := gui.createDeviceCard(portID, device)
 				gui.devicesContainer.Add(deviceCard)
+				log.Printf("Добавлена карточка для устройства: порт %d, %s", portID, device.Name)
 			}
+		}
+
+		if connectedCount == 0 {
+			noDevicesLabel := widget.NewLabel("Все устройства отключены")
+			noDevicesLabel.Alignment = fyne.TextAlignCenter
+			noDevicesLabel.TextStyle.Italic = true
+			gui.devicesContainer.Add(noDevicesLabel)
 		}
 	}
 
 	gui.devicesContainer.Refresh()
+	log.Println("Список устройств обновлен")
 }
 
 // createDeviceCard создает карточку устройства
