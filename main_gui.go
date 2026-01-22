@@ -369,7 +369,6 @@ func (gui *MainGUI) showHubDiscoveryDialog() {
 }
 
 // connectToHub подключается к указанному хабу
-// connectToHub подключается к указанному хабу
 func (gui *MainGUI) connectToHub(address string) {
 	progress := dialog.NewProgressInfinite("Подключение", "Подключение к хабу...", gui.window)
 	progress.Show()
@@ -387,13 +386,20 @@ func (gui *MainGUI) connectToHub(address string) {
 				dialog.ShowInformation("Успешно", "Подключение установлено!", gui.window)
 
 				// Запускаем обнаружение портов через 3 секунды
+				// После успешного подключения
 				go func() {
-					time.Sleep(3 * time.Second)
-					log.Println("Запуск обнаружения портов...")
+					time.Sleep(2 * time.Second) // Ждем инициализации
+					log.Println("Запуск автоматического обнаружения устройств...")
 
-					// Создаем объект обнаружения портов
-					portDiscovery := NewPortDiscovery(gui.hubMgr)
-					portDiscovery.DiscoverPorts()
+					if gui.hubMgr != nil {
+						gui.hubMgr.autoDetectDevices()
+					}
+
+					// Обновляем GUI
+					time.Sleep(1 * time.Second)
+					fyne.Do(func() {
+						gui.updateDeviceList()
+					})
 				}()
 			}
 		})
@@ -499,23 +505,29 @@ func (gui *MainGUI) createDevicePanel() *container.Scroll {
 	mainContainer.Add(gui.devicesContainer)
 
 	// Кнопка для ручного обнаружения устройств
-	if gui.hubMgr.IsConnected() {
-		discoverButton := widget.NewButton("Обнаружить устройства", func() {
-			portDiscovery := NewPortDiscovery(gui.hubMgr)
-			portDiscovery.DiscoverPorts()
+	discoverButton := widget.NewButton("Обнаружить устройства", func() {
+		log.Println("Запуск ручного обнаружения устройств...")
 
-			// Обновляем список устройств через 2 секунды
-			go func() {
-				time.Sleep(2 * time.Second)
-				fyne.Do(func() {
-					gui.updateDeviceList()
-				})
-			}()
-		})
-		discoverButton.Importance = widget.LowImportance
-		mainContainer.Add(discoverButton)
-		mainContainer.Add(widget.NewSeparator())
-	}
+		go func() {
+			// Даем время на обновление GUI
+			time.Sleep(100 * time.Millisecond)
+
+			// Запускаем автоматическое определение
+			if gui.hubMgr != nil {
+				gui.hubMgr.autoDetectDevices()
+			}
+
+			// Обновляем список устройств
+			time.Sleep(1 * time.Second)
+			fyne.Do(func() {
+				gui.updateDeviceList()
+			})
+		}()
+	})
+
+	discoverButton.Importance = widget.MediumImportance
+	mainContainer.Add(discoverButton)
+	mainContainer.Add(widget.NewSeparator())
 
 	return container.NewVScroll(container.NewPadded(mainContainer))
 }
