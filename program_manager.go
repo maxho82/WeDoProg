@@ -143,7 +143,8 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			power := block.Parameters["power"].(int8)
 			duration := block.Parameters["duration"].(uint16)
 
-			return pm.deviceMgr.SetMotorPower(port, power, duration)
+			// Используем функцию с ожиданием
+			return pm.deviceMgr.SetMotorPowerAndWait(port, power, duration)
 		}
 
 	case BlockTypeLED:

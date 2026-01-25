@@ -98,22 +98,13 @@ func (dm *DeviceManager) SetMotorPower(portID byte, power int8, duration uint16)
 
 	if !exists {
 		log.Printf("Устройство на порту %d не найдено ни в DeviceManager, ни в HubManager", portID)
-		return fmt.Errorf("устройство на порту %d не найдено", portID)
+		// Пытаемся выполнить команду даже если устройство не найдено
+		log.Printf("Пытаемся выполнить команду для порта %d без проверки устройства", portID)
 	}
 
-	if !device.IsConnected {
+	if exists && !device.IsConnected {
 		log.Printf("Устройство на порту %d существует, но не подключено", portID)
-		return fmt.Errorf("устройство на порту %d не подключено", portID)
-	}
-
-	// Проверяем тип устройства более гибко
-	// Некоторые хабы могут иметь моторы с разными типами
-	if device.DeviceType != DEVICE_TYPE_MOTOR {
-		log.Printf("Устройство на порту %d имеет тип %v (0x%02x), ожидается мотор (0x%02x)",
-			portID, device.Name, device.DeviceType, DEVICE_TYPE_MOTOR)
-		// В режиме отладки все равно пытаемся выполнить команду
-		// return fmt.Errorf("устройство на порту %d не является мотором", portID)
-		log.Printf("ВНИМАНИЕ: выполняем команду мотора для устройства типа 0x%02x", device.DeviceType)
+		// Все равно пытаемся выполнить команду
 	}
 
 	// Преобразуем мощность в байт
@@ -134,17 +125,76 @@ func (dm *DeviceManager) SetMotorPower(portID byte, power int8, duration uint16)
 
 	err := dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", cmd)
 
-	// Если есть длительность, запускаем таймер для остановки
+	if err != nil {
+		return err
+	}
+
+	// Если есть длительность, ждем ее завершения
 	if duration > 0 {
+		log.Printf("Мотор на порту %d будет работать %d мс", portID, duration)
+
+		// Создаем канал для синхронизации
+		done := make(chan bool)
+
 		go func() {
 			time.Sleep(time.Duration(duration) * time.Millisecond)
 			stopCmd := []byte{portID, 0x01, 0x01, 0x00}
 			dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
 			log.Printf("Мотор на порту %d автоматически остановлен после %d мс", portID, duration)
+			done <- true
 		}()
+
+		// Ждем завершения в отдельной горутине, чтобы не блокировать основной поток
+		// для тестового режима
+		return nil
 	}
 
-	return err
+	return nil
+}
+
+// Новая функция: SetMotorPowerAndWait - с ожиданием завершения
+func (dm *DeviceManager) SetMotorPowerAndWait(portID byte, power int8, duration uint16) error {
+	if !dm.hubMgr.IsConnected() {
+		return fmt.Errorf("не подключено к хабу")
+	}
+
+	// Преобразуем мощность в байт
+	var speedByte byte
+	powerFloat := float64(power) / 100.0
+
+	if powerFloat < 0 {
+		speedByte = byte(int(0x54*powerFloat) + 0xF0)
+	} else if powerFloat > 0 {
+		speedByte = byte(int(0x54*powerFloat) + 0x10)
+	} else {
+		speedByte = 0x00
+	}
+
+	cmd := []byte{portID, 0x01, 0x01, speedByte}
+
+	log.Printf("Установка мощности мотора на порту %d: %d%% на %d мс", portID, power, duration)
+
+	err := dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", cmd)
+
+	if err != nil {
+		return err
+	}
+
+	// Если есть длительность, ждем ее завершения СИНХРОННО
+	if duration > 0 {
+		log.Printf("Мотор на порту %d работает %d мс...", portID, duration)
+		time.Sleep(time.Duration(duration) * time.Millisecond)
+
+		// Останавливаем мотор
+		stopCmd := []byte{portID, 0x01, 0x01, 0x00}
+		err = dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
+		if err != nil {
+			log.Printf("Ошибка остановки мотора на порту %d: %v", portID, err)
+		}
+		log.Printf("Мотор на порту %d остановлен", portID)
+	}
+
+	return nil
 }
 
 // SetLEDColor устанавливает цвет светодиода
