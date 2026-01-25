@@ -74,36 +74,49 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 }
 
 // BuildUI строит интерфейс приложения
+// BuildUI строит интерфейс приложения
 func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	// Создаем панели
-	toolbar := gui.createToolbar() // Теперь это fyne.CanvasObject
+	toolbar := gui.createToolbar()
 	gui.devicePanel = gui.createDevicePanel()
 	gui.propertiesPanel = gui.createPropertiesPanel()
 	gui.blocksPanel = gui.createBlocksPanel()
 	gui.programPanel = NewProgramPanel(gui, gui.programMgr)
 
-	// Разделители
-	leftSplit := container.NewHSplit(gui.devicePanel, gui.programPanel.GetContainer())
-	leftSplit.SetOffset(0.25)
+	// Устанавливаем минимальные размеры для лучшего отображения
+	gui.blocksPanel.SetMinSize(fyne.NewSize(200, 400))
+	gui.devicePanel.SetMinSize(fyne.NewSize(250, 400))
+	gui.propertiesPanel.SetMinSize(fyne.NewSize(250, 400))
 
+	// НОВАЯ СТРУКТУРА:
+	// Слева: информация об устройстве (devicePanel)
+	// В центре: программа (programPanel) и блоки (blocksPanel) рядом
+	// Справа: свойства (propertiesPanel)
+
+	// Сначала создаем горизонтальный контейнер для blocksPanel и programPanel
+	programmingArea := container.NewHBox(
+		gui.blocksPanel,
+		gui.programPanel.GetContainer(),
+	)
+
+	// Создаем разделитель между devicePanel и programmingArea
+	leftSplit := container.NewHSplit(gui.devicePanel, programmingArea)
+	leftSplit.SetOffset(0.25) // devicePanel занимает 25%, programmingArea 75%
+
+	// Добавляем propertiesPanel справа
 	rightSplit := container.NewHSplit(leftSplit, gui.propertiesPanel)
-	rightSplit.SetOffset(0.75)
+	rightSplit.SetOffset(0.75) // левая часть 75%, propertiesPanel 25%
 
 	// Основной макет
 	mainContent := container.NewBorder(
-		toolbar, // Верх - теперь это fyne.CanvasObject
-		//gui.createStatusBar(), // Низ
+		toolbar,    // Верх - панель инструментов
+		nil,        // Низ
 		nil,        // Лево
 		nil,        // Право
-		rightSplit, // Центр
+		rightSplit, // Центр - основное содержимое
 	)
 
-	// Добавляем панель блоков слева
-	fullLayout := container.NewBorder(
-		nil, nil, gui.blocksPanel, nil, mainContent,
-	)
-
-	return fullLayout
+	return mainContent
 }
 
 // createToolbar создает панель инструментов
@@ -166,7 +179,7 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	blocksContainer := container.NewVBox()
 
 	// Заголовок
-	title := canvas.NewText("Блоки программирования", color.NRGBA{R: 240, G: 240, B: 240, A: 255})
+	title := canvas.NewText("Палитра блоков", color.NRGBA{R: 240, G: 240, B: 240, A: 255})
 	title.TextSize = 16
 	title.TextStyle.Bold = true
 	title.Alignment = fyne.TextAlignCenter
@@ -209,7 +222,9 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 		blocksContainer.Add(widget.NewSeparator())
 	}
 
-	return container.NewVScroll(container.NewPadded(blocksContainer))
+	scroll := container.NewVScroll(container.NewPadded(blocksContainer))
+	scroll.SetMinSize(fyne.NewSize(220, 600)) // Увеличиваем ширину
+	return scroll
 }
 
 // createProgramPanel создает панель программирования
@@ -516,7 +531,9 @@ func (gui *MainGUI) createDevicePanel() *container.Scroll {
 	mainContainer.Add(discoverButton)
 	mainContainer.Add(widget.NewSeparator())
 
-	return container.NewVScroll(container.NewPadded(mainContainer))
+	scroll := container.NewVScroll(container.NewPadded(mainContainer))
+	scroll.SetMinSize(fyne.NewSize(280, 600)) // Увеличиваем ширину
+	return scroll
 }
 
 // createBatteryWidget создает виджет батареи (только прогресс-бар)
