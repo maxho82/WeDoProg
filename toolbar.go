@@ -37,6 +37,29 @@ func (t *Toolbar) GetContainer() fyne.CanvasObject {
 	return t.container // Это уже *fyne.Container, который реализует fyne.CanvasObject
 }
 
+// UpdateState обновляет состояние кнопок панели инструментов
+func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool) {
+	if t.runButton != nil && t.stopButton != nil {
+		if isConnected {
+			t.runButton.Enable()
+			t.stopButton.Enable()
+		} else {
+			t.runButton.Disable()
+			t.stopButton.Disable()
+		}
+	}
+
+	if t.saveButton != nil && t.exportButton != nil {
+		if hasProgram {
+			t.saveButton.Enable()
+			t.exportButton.Enable()
+		} else {
+			t.saveButton.Disable()
+			t.exportButton.Disable()
+		}
+	}
+}
+
 // buildUI строит интерфейс панели инструментов
 func (t *Toolbar) buildUI() *fyne.Container {
 	// Кнопка подключения хаба

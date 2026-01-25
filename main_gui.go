@@ -14,7 +14,6 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	//"fyne.io/fyne/v2/driver/desktop"
 )
 
 // MainGUI основной интерфейс приложения
@@ -237,38 +236,6 @@ func (gui *MainGUI) clearPropertiesPanel() {
 
 // createToolbar создает панель инструментов
 func (gui *MainGUI) createToolbar() *fyne.Container {
-	/* gui.statusLabel = widget.NewLabel("Не подключено")
-	gui.statusLabel.Alignment = fyne.TextAlignCenter
-	gui.statusLabel.TextStyle.Bold = true
-
-	gui.connectButton = widget.NewButtonWithIcon("Поиск хаба", theme.SearchIcon(), func() {
-		gui.showHubDiscoveryDialog()
-	})
-	gui.connectButton.Importance = widget.MediumImportance
-
-	gui.disconnectButton = widget.NewButtonWithIcon("Отключиться", theme.CancelIcon(), func() {
-		gui.hubMgr.Disconnect()
-		gui.updateConnectionStatus(false)
-	})
-	gui.disconnectButton.Importance = widget.MediumImportance
-	gui.disconnectButton.Disable()
-
-	gui.testProtocolButton = widget.NewButtonWithIcon("Тест протокола", theme.VisibilityIcon(), func() {
-		gui.showProtocolTestDialog()
-	})
-	gui.testProtocolButton.Importance = widget.LowImportance
-
-	toolbar := container.NewHBox(
-		gui.connectButton,
-		gui.disconnectButton,
-		widget.NewSeparator(),
-		gui.testProtocolButton,
-		layout.NewSpacer(),
-		gui.statusLabel,
-		layout.NewSpacer(),
-	)
-
-	//return toolbar */
 	// Создаем Toolbar объект
 	gui.toolbar = NewToolbar(gui)
 	// Приведение типа с проверкой
@@ -642,6 +609,27 @@ func (gui *MainGUI) createDevicePanel() *container.Scroll {
 		}()
 	})
 
+	syncButton := widget.NewButton("Синхронизировать устройства", func() {
+		log.Println("Ручная синхронизация устройств...")
+
+		go func() {
+			if gui.deviceMgr != nil {
+				gui.deviceMgr.SyncDevices()
+			}
+
+			// Обновляем список устройств
+			time.Sleep(500 * time.Millisecond)
+			fyne.Do(func() {
+				gui.updateDeviceList()
+				gui.updateAvailableBlocks()
+			})
+		}()
+	})
+
+	syncButton.Importance = widget.MediumImportance
+	mainContainer.Add(syncButton)
+	mainContainer.Add(widget.NewSeparator())
+
 	discoverButton.Importance = widget.MediumImportance
 	mainContainer.Add(discoverButton)
 	mainContainer.Add(widget.NewSeparator())
@@ -953,28 +941,5 @@ func (gui *MainGUI) updateToolbarState(isConnected bool, hasProgram bool) {
 	// или напрямую обновлять кнопки
 	if gui.toolbar != nil {
 		gui.toolbar.UpdateState(isConnected, hasProgram)
-	}
-}
-
-// UpdateState обновляет состояние кнопок
-func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool) {
-	if t.runButton != nil && t.stopButton != nil {
-		if isConnected {
-			t.runButton.Enable()
-			t.stopButton.Enable()
-		} else {
-			t.runButton.Disable()
-			t.stopButton.Disable()
-		}
-	}
-
-	if t.saveButton != nil && t.exportButton != nil {
-		if hasProgram {
-			t.saveButton.Enable()
-			t.exportButton.Enable()
-		} else {
-			t.saveButton.Disable()
-			t.exportButton.Disable()
-		}
 	}
 }

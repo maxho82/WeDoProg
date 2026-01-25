@@ -354,9 +354,18 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 			if err := currentBlock.OnExecute(); err != nil {
 				log.Printf("Ошибка выполнения блока %d: %v", currentBlock.ID, err)
 				pm.currentState = ProgramStateError
-				// Можно показать сообщение об ошибке
+				// Показываем сообщение об ошибке
+				// В реальном приложении нужно уведомить GUI
 				break
 			}
+		} else {
+			log.Printf("Блок %d не имеет функции выполнения", currentBlock.ID)
+		}
+
+		// Ждем между блоками
+		if currentBlock.Type != BlockTypeWait {
+			// Для всех блоков кроме "Ждать" небольшая задержка
+			time.Sleep(50 * time.Millisecond)
 		}
 
 		// Ищем следующий блок
@@ -365,11 +374,14 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 			currentBlock = nextBlock
 		} else {
 			// Конец программы
+			log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
 			break
 		}
 
-		// Небольшая задержка между блоками
-		time.Sleep(100 * time.Millisecond)
+		// Дополнительная проверка на остановку
+		if pm.currentState != ProgramStateRunning {
+			break
+		}
 	}
 
 	if pm.currentState == ProgramStateRunning {
@@ -377,6 +389,50 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 		log.Println("Программа завершена успешно")
 	} else if pm.currentState == ProgramStateError {
 		log.Println("Программа завершена с ошибкой")
+	}
+
+	// Гарантируем остановку всех моторов
+	pm.ensureAllMotorsStopped()
+}
+
+// ensureAllMotorsStopped гарантирует остановку всех моторов
+func (pm *ProgramManager) ensureAllMotorsStopped() {
+	log.Println("Гарантированная остановка всех моторов...")
+
+	// Пытаемся остановить моторы на всех возможных портах
+	for port := byte(1); port <= 6; port++ {
+		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
+			// Прямая команда остановки
+			stopCmd := []byte{port, 0x01, 0x01, 0x00}
+			pm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
+		}
+	}
+}
+
+// В функции StopProgram также улучшим:
+func (pm *ProgramManager) StopProgram() {
+	if pm.currentState == ProgramStateRunning {
+		pm.currentState = ProgramStateStopped
+		log.Println("Программа остановлена")
+
+		// Останавливаем все моторы
+		pm.ensureAllMotorsStopped()
+
+		// Также останавливаем звуки
+		pm.stopAllSounds()
+	}
+}
+
+// stopAllSounds останавливает все звуки
+func (pm *ProgramManager) stopAllSounds() {
+	log.Println("Остановка всех звуков...")
+
+	for port := byte(1); port <= 6; port++ {
+		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
+			// Команда остановки звука
+			stopCmd := []byte{port, 0x03, 0x00}
+			pm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
+		}
 	}
 }
 
@@ -388,23 +444,6 @@ func (pm *ProgramManager) findBlockByID(blockID int) *ProgramBlock {
 		}
 	}
 	return nil
-}
-
-// StopProgram останавливает выполнение программы
-func (pm *ProgramManager) StopProgram() {
-	if pm.currentState == ProgramStateRunning {
-		pm.currentState = ProgramStateStopped
-		log.Println("Программа остановлена")
-
-		// Останавливаем все моторы
-		for _, block := range pm.program.Blocks {
-			if block.Type == BlockTypeMotor {
-				if port, ok := block.Parameters["port"].(byte); ok {
-					pm.deviceMgr.SetMotorPower(port, 0, 0)
-				}
-			}
-		}
-	}
 }
 
 // ClearProgram очищает программу
@@ -497,19 +536,6 @@ func (pm *ProgramManager) GetProgramState() ProgramState {
 	return pm.currentState
 }
 
-// UpdateBlockPosition обновляет позицию блока
-/* func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
-	for _, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			block.X = x
-			block.Y = y
-			block.DragStartPos = fyne.NewPos(float32(x), float32(y))
-			pm.program.Modified = time.Now()
-			return true
-		}
-	}
-	return false
-} */
 // UpdateBlockPosition обновляет позицию блока
 func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
 	for _, block := range pm.program.Blocks {

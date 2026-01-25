@@ -82,17 +82,3 @@ func (hm *HubManager) GetConnectedDevices() []*Device {
 	}
 	return devices
 }
-
-/* // UpdateBlockPosition обновляет позицию блока
-func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
-	for _, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			block.X = x
-			block.Y = y
-			pm.program.Modified = time.Now()
-			return true
-		}
-	}
-	return false
-}
-*/

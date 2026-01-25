@@ -1,4 +1,3 @@
-// port_parser.go
 package main
 
 import (
@@ -16,7 +15,7 @@ type PortMessage struct {
 }
 
 // ParsePortMessage парсит сообщение о порте
-/* func ParsePortMessage(data []byte) *PortMessage {
+func ParsePortMessage(data []byte) *PortMessage {
 	if len(data) < 4 {
 		log.Printf("Слишком короткое сообщение о порте: %x", data)
 		return nil
@@ -34,86 +33,6 @@ type PortMessage struct {
 	}
 
 	return msg
-} */
-
-// ParsePortMessageV2 правильный парсинг сообщений о портах для WeDo 2.0
-func ParsePortMessageV2(data []byte) *PortMessage {
-	if len(data) < 4 {
-		log.Printf("Слишком короткое сообщение о порте: %x", data)
-		return nil
-	}
-
-	// Формат WeDo 2.0: [PortID, Action, ???, DeviceType, ...]
-	// Но в данных приходит: [MsgLen, HubID, PortID, EventType, ...]
-	// Смотрим на реальные данные из лога
-
-	// Из лога: данные=020101220000001000000010
-	// Разбиваем: 02 01 01 22 00 00 00 10 00 00 00
-	// Вероятно: MsgLen=0x02, HubID=0x01, PortID=0x01, EventType=0x22
-
-	// Но согласно статье: PortID=0x01, Action=0x01, ???=0x22, DeviceType=???
-
-	// Возможно, EventType и есть DeviceType для уведомлений о подключении
-
-	msg := &PortMessage{
-		MsgLen:    data[0],
-		HubID:     data[1],
-		PortID:    data[2],
-		EventType: data[3],
-	}
-
-	if len(data) > 4 {
-		msg.Data = data[4:]
-	}
-
-	return msg
-}
-
-// GetDeviceTypeV2 правильное определение типа устройства
-func (msg *PortMessage) GetDeviceTypeV2() byte {
-	// В WeDo 2.0 тип устройства может быть в EventType для некоторых сообщений
-	// Или в Data[0] для других
-
-	// Проверяем, является ли EventType известным типом устройства
-	switch msg.EventType {
-	case DEVICE_TYPE_TILT_SENSOR: // 0x22
-	case DEVICE_TYPE_MOTION_SENSOR: // 0x23
-	case DEVICE_TYPE_RGB_LIGHT: // 0x17
-	case DEVICE_TYPE_PIEZO_TONE: // 0x16
-	case DEVICE_TYPE_VOLTAGE: // 0x14
-	case DEVICE_TYPE_CURRENT: // 0x15
-		return msg.EventType
-	}
-
-	// Если EventType не тип устройства, проверяем данные
-	if len(msg.Data) > 0 {
-		// Возможно, тип устройства в первом байте данных
-		return msg.Data[0]
-	}
-
-	return 0x00
-}
-
-// IsConnectionEventV2 правильная проверка подключения
-func (msg *PortMessage) IsConnectionEventV2() bool {
-	// В WeDo 2.0 подключение может определяться по разным признакам
-	// 1. EventType == 0x01 (как в статье)
-	// 2. Или EventType является типом устройства (0x22, 0x23 и т.д.)
-	// 3. Или по комбинации байтов
-
-	// Проверяем, является ли EventType типом устройства
-	if msg.GetDeviceTypeV2() != 0x00 {
-		return true
-	}
-
-	// Или проверяем стандартный признак
-	return msg.EventType == 0x01
-}
-
-// IsDisconnectionEventV2 правильная проверка отключения
-func (msg *PortMessage) IsDisconnectionEventV2() bool {
-	// В WeDo 2.0 отключение может быть 0x00
-	return msg.EventType == 0x00
 }
 
 // IsConnectionEvent проверяет, является ли событие подключением устройства
@@ -127,14 +46,12 @@ func (msg *PortMessage) IsDisconnectionEvent() bool {
 }
 
 // GetDeviceType пытается извлечь тип устройства из сообщения
-// GetDeviceType улучшенная версия определения типа устройства
 func (msg *PortMessage) GetDeviceType() byte {
 	if len(msg.Data) == 0 {
 		return 0x00
 	}
 
 	// Пытаемся определить тип по известным форматам LPF2
-
 	// Формат 1: [DeviceType, ...] - тип в первом байте
 	if len(msg.Data) >= 1 {
 		deviceType := msg.Data[0]
@@ -207,21 +124,4 @@ func DecodeSensorValues(data []byte, portID byte) interface{} {
 	}
 
 	return nil
-}
-
-// ParseWeDo2PortMessage парсит сообщения о портах в формате WeDo 2.0
-func ParseWeDo2PortMessage(data []byte) (portID byte, isConnected bool, hubID byte, deviceType byte) {
-	if len(data) < 4 {
-		return 0, false, 0, 0
-	}
-
-	// Формат WeDo 2.0: [PortID, ConnectionEvent, HubID, DeviceType, ...]
-	portID = data[0]
-	connectionEvent := data[1]
-	hubID = data[2]
-	deviceType = data[3]
-
-	isConnected = (connectionEvent == 0x01)
-
-	return portID, isConnected, hubID, deviceType
 }

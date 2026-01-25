@@ -106,7 +106,7 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	}
 
 	// Мощность
-	powerLabelWidget := widget.NewLabel("Мощность (-100% до 100%):") // Переименовали переменную
+	powerLabelWidget := widget.NewLabel("Мощность (-100% до 100%):")
 	powerSlider := widget.NewSlider(-100, 100)
 	powerValueLabel := widget.NewLabel("")
 
@@ -127,7 +127,7 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	}
 
 	// Длительность
-	durationLabelWidget := widget.NewLabel("Длительность (мс):") // Переименовали переменную
+	durationLabelWidget := widget.NewLabel("Длительность (мс, 0 = бесконечно):")
 	durationEntry := widget.NewEntry()
 
 	// Устанавливаем текущее значение
@@ -139,10 +139,12 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	}
 
 	durationEntry.OnChanged = func(text string) {
-		if dur, err := strconv.ParseUint(text, 10, 16); err == nil {
+		if text == "" {
+			e.block.Parameters["duration"] = uint16(0)
+		} else if dur, err := strconv.ParseUint(text, 10, 16); err == nil {
 			e.block.Parameters["duration"] = uint16(dur)
-			e.notifyChange()
 		}
+		e.notifyChange()
 	}
 
 	// Кнопка теста
@@ -152,14 +154,20 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 			power := e.block.Parameters["power"].(int8)
 			duration := e.block.Parameters["duration"].(uint16)
 
+			// Сначала синхронизируем устройства
+			e.deviceMgr.SyncDevices()
+
+			// Тестируем
 			err := e.deviceMgr.SetMotorPower(port, power, duration)
 			if err != nil {
 				log.Printf("Ошибка теста мотора: %v", err)
-				dialog.ShowError(fmt.Errorf("Ошибка теста мотора: %v", err), e.window)
+				dialog.ShowError(fmt.Errorf("Ошибка теста мотора: %v\nПроверьте подключение устройства", err), e.window)
 			} else {
-				dialog.ShowInformation("Тест мотора",
-					fmt.Sprintf("Мотор на порту %d запущен на мощности %d%%", port, power),
-					e.window)
+				message := fmt.Sprintf("Мотор на порту %d запущен на мощности %d%%", port, power)
+				if duration > 0 {
+					message += fmt.Sprintf("\nАвтоматически остановится через %d мс", duration)
+				}
+				dialog.ShowInformation("Тест мотора", message, e.window)
 			}
 		} else {
 			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
@@ -168,9 +176,9 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 
 	cont.Add(portLabel)
 	cont.Add(portSelect)
-	cont.Add(powerLabelWidget) // Используем переименованную переменную
+	cont.Add(powerLabelWidget)
 	cont.Add(container.NewHBox(powerSlider, powerValueLabel))
-	cont.Add(durationLabelWidget) // Используем переименованную переменную
+	cont.Add(durationLabelWidget)
 	cont.Add(durationEntry)
 	cont.Add(testButton)
 }
