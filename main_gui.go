@@ -136,36 +136,38 @@ func (gui *MainGUI) deleteSelectedBlock() {
 		return
 	}
 
-	// Сохраняем ID для лога перед удалением
 	blockID := gui.selectedBlock.ID
 	blockTitle := gui.selectedBlock.Title
 
-	// Спрашиваем подтверждение
 	dialog.ShowConfirm("Удалить блок",
 		fmt.Sprintf("Удалить блок '%s' (ID: %d)?", blockTitle, blockID),
 		func(confirmed bool) {
 			if confirmed {
-				log.Printf("Начинаем удаление блока %d", blockID)
+				gui.BatchUpdate(
+					func() {
+						// 1. Удаляем блок из менеджера программ
+						gui.programMgr.RemoveBlock(blockID)
 
-				// Удаляем блок из менеджера программ
-				success := gui.removeBlockFromProgram(blockID)
-				if !success {
-					log.Printf("Не удалось удалить блок %d из менеджера программ", blockID)
-				}
+						// 2. Удаляем блок с панели программирования
+						gui.programPanel.RemoveBlock(blockID)
 
-				// Удаляем блок с панели программирования
-				gui.programPanel.RemoveBlock(blockID)
+						// 3. Очищаем панель свойств
+						gui.clearPropertiesPanel()
 
-				// Очищаем панель свойств
-				gui.clearPropertiesPanel()
+						// 4. Сбрасываем выделение
+						gui.selectedBlock = nil
 
-				// Сбрасываем выделение
-				gui.selectedBlock = nil
+						// 5. Обновляем состояние
+						hasProgram := len(gui.programMgr.program.Blocks) > 0
+						isConnected := gui.hubMgr != nil && gui.hubMgr.IsConnected()
+						gui.updateToolbarState(isConnected, hasProgram)
+
+						// 6. Обновляем соединения
+						gui.programPanel.UpdateAllConnections()
+					},
+				)
 
 				log.Printf("Блок %d удален", blockID)
-
-				// Обновляем соединения
-				gui.programPanel.RecreateConnections()
 			}
 		}, gui.window)
 }
@@ -174,9 +176,9 @@ func (gui *MainGUI) deleteSelectedBlock() {
 func (gui *MainGUI) removeBlockFromProgram(blockID int) bool {
 	log.Printf("Удаление блока %d из программы", blockID)
 
-	// Находим и удаляем блок
-	var newBlocks []*ProgramBlock
+	// Удаляем блок из ProgramManager
 	blockFound := false
+	var newBlocks []*ProgramBlock
 	for _, block := range gui.programMgr.program.Blocks {
 		if block.ID != blockID {
 			newBlocks = append(newBlocks, block)
@@ -191,16 +193,52 @@ func (gui *MainGUI) removeBlockFromProgram(blockID int) bool {
 	}
 
 	gui.programMgr.program.Blocks = newBlocks
-	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(newBlocks))
 
-	// Удаляем соединения с этим блоком
-	gui.removeConnectionsForBlock(blockID)
+	// Удаляем все соединения, связанные с этим блоком
+	var newConnections []*Connection
+	for _, conn := range gui.programMgr.program.Connections {
+		if conn.FromBlockID != blockID && conn.ToBlockID != blockID {
+			newConnections = append(newConnections, conn)
+		} else {
+			// Если это соединение ИЗ удаляемого блока, сбрасываем NextBlockID у всех блоков, которые ссылались на него
+			if conn.FromBlockID == blockID {
+				// Находим блок, который ссылался на удаляемый блок и сбрасываем его NextBlockID
+				for _, block := range newBlocks {
+					if block.NextBlockID == blockID {
+						block.NextBlockID = 0
+					}
+				}
+			}
+		}
+	}
+	gui.programMgr.program.Connections = newConnections
 
-	// Обновляем состояние кнопок
-	hasProgram := len(gui.programMgr.program.Blocks) > 0
-	gui.updateToolbarState(gui.hubMgr.IsConnected(), hasProgram)
+	// Обновляем последний блок Y-координаты в панели программирования
+	gui.updateLastBlockY()
+
+	gui.programMgr.program.Modified = time.Now()
+	log.Printf("Блок %d удален из программы. Осталось блоков: %d, соединений: %d",
+		blockID, len(newBlocks), len(newConnections))
 
 	return true
+}
+
+// updateLastBlockY обновляет последнюю Y-координату для добавления новых блоков
+func (gui *MainGUI) updateLastBlockY() {
+	if len(gui.programMgr.program.Blocks) == 0 {
+		gui.programPanel.lastBlockY = 50
+		return
+	}
+
+	// Находим максимальную Y-координату среди всех блоков
+	maxY := float64(50)
+	for _, block := range gui.programMgr.program.Blocks {
+		if block.Y+block.Height > maxY {
+			maxY = block.Y + block.Height
+		}
+	}
+
+	gui.programPanel.lastBlockY = maxY + 40 // Добавляем отступ
 }
 
 // removeConnectionsForBlock удаляет соединения для блока
@@ -942,4 +980,13 @@ func (gui *MainGUI) updateToolbarState(isConnected bool, hasProgram bool) {
 	if gui.toolbar != nil {
 		gui.toolbar.UpdateState(isConnected, hasProgram)
 	}
+}
+
+// BatchUpdate выполняет несколько обновлений UI за один раз
+func (gui *MainGUI) BatchUpdate(updates ...func()) {
+	fyne.Do(func() {
+		for _, update := range updates {
+			update()
+		}
+	})
 }

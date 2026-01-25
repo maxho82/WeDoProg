@@ -11,12 +11,13 @@ import (
 
 // ProgramPanel панель визуального программирования
 type ProgramPanel struct {
-	gui         *MainGUI
-	scroll      *container.Scroll
-	content     *fyne.Container
-	programMgr  *ProgramManager
-	connections []*ConnectionLine
-	lastBlockY  float64
+	gui          *MainGUI
+	scroll       *container.Scroll
+	content      *fyne.Container
+	programMgr   *ProgramManager
+	connections  []*ConnectionLine
+	blockWidgets map[int]*DraggableBlock // Кэш виджетов блоков по ID
+	lastBlockY   float64
 }
 
 // ConnectionLine линия соединения между блоками
@@ -29,10 +30,11 @@ type ConnectionLine struct {
 // NewProgramPanel создает панель программирования
 func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 	panel := &ProgramPanel{
-		gui:         gui,
-		programMgr:  programMgr,
-		connections: make([]*ConnectionLine, 0),
-		lastBlockY:  50, // Начальная Y-координата для первого блока
+		gui:          gui,
+		programMgr:   programMgr,
+		connections:  make([]*ConnectionLine, 0),
+		blockWidgets: make(map[int]*DraggableBlock), // Инициализируем кэш
+		lastBlockY:   50,                            // Начальная Y-координата для первого блока
 	}
 
 	panel.content = container.NewWithoutLayout()
@@ -83,6 +85,12 @@ func (p *ProgramPanel) addGrid() {
 
 // AddBlock добавляет блок на холст
 func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
+	// Проверяем, не добавлен ли уже блок
+	if _, exists := p.blockWidgets[block.ID]; exists {
+		log.Printf("Блок %d уже добавлен на холст", block.ID)
+		return
+	}
+
 	// Устанавливаем позицию блока
 	block.X = 100
 	block.Y = p.lastBlockY
@@ -93,6 +101,7 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 	blockWidget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
 
 	p.content.Add(blockWidget)
+	p.blockWidgets[block.ID] = blockWidget // Сохраняем в кэш
 	p.content.Refresh()
 
 	// Автоматически соединяем с предыдущим блоком
@@ -128,19 +137,11 @@ func (p *ProgramPanel) autoConnectBlock(newBlock *ProgramBlock) {
 
 // createVisualConnection создает визуальное соединение между блоками
 func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
-	// Находим виджеты блоков
-	var fromWidget, toWidget *DraggableBlock
-	for _, obj := range p.content.Objects {
-		if block, ok := obj.(*DraggableBlock); ok {
-			if block.block.ID == fromBlockID {
-				fromWidget = block
-			} else if block.block.ID == toBlockID {
-				toWidget = block
-			}
-		}
-	}
+	// Получаем виджеты из кэша
+	fromWidget, fromExists := p.blockWidgets[fromBlockID]
+	toWidget, toExists := p.blockWidgets[toBlockID]
 
-	if fromWidget == nil || toWidget == nil {
+	if !fromExists || !toExists {
 		log.Printf("Не удалось найти виджеты для соединения %d -> %d", fromBlockID, toBlockID)
 		return
 	}
@@ -155,13 +156,7 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 	line.Position2 = toPos
 	line.StrokeWidth = 2
 
-	// Добавляем стрелку на конце линии (простой вариант)
-	p.addSimpleArrowHead(line, fromPos, toPos)
-
 	p.content.Add(line)
-	// Перемещаем линию на задний план (после фона, но перед блоками)
-	// Для простоты просто добавляем в конец
-	p.content.Objects = append([]fyne.CanvasObject{line}, p.content.Objects...)
 
 	// Сохраняем соединение
 	connection := &ConnectionLine{
@@ -210,16 +205,22 @@ func (p *ProgramPanel) updateConnections() {
 
 // RemoveBlock удаляет блок с холста
 func (p *ProgramPanel) RemoveBlock(blockID int) {
-	for i, obj := range p.content.Objects {
-		if block, ok := obj.(*DraggableBlock); ok && block.block.ID == blockID {
-			p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
-			p.content.Refresh()
-			break
+	// Удаляем из кэша
+	if blockWidget, exists := p.blockWidgets[blockID]; exists {
+		// Удаляем из контейнера
+		for i, obj := range p.content.Objects {
+			if obj == blockWidget {
+				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
+				break
+			}
 		}
+		delete(p.blockWidgets, blockID)
 	}
 
 	// Удаляем связанные соединения
 	p.removeConnectionsForBlock(blockID)
+
+	p.content.Refresh()
 }
 
 // removeConnectionsForBlock удаляет соединения для блока
@@ -276,6 +277,7 @@ func (p *ProgramPanel) Clear() {
 
 	p.content.Objects = newObjects
 	p.connections = make([]*ConnectionLine, 0)
+	p.blockWidgets = make(map[int]*DraggableBlock) // Очищаем кэш
 	p.lastBlockY = 50
 	p.content.Refresh()
 }
@@ -327,6 +329,27 @@ func (p *ProgramPanel) RecreateConnections() {
 	p.connections = make([]*ConnectionLine, 0)
 
 	// Создаем новые соединения
+	for _, conn := range p.programMgr.program.Connections {
+		p.createVisualConnection(conn.FromBlockID, conn.ToBlockID)
+	}
+
+	p.content.Refresh()
+}
+
+// UpdateAllConnections полностью обновляет все соединения
+func (p *ProgramPanel) UpdateAllConnections() {
+	// Удаляем все существующие визуальные соединения
+	for _, conn := range p.connections {
+		for i, obj := range p.content.Objects {
+			if obj == conn.line {
+				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
+				break
+			}
+		}
+	}
+	p.connections = make([]*ConnectionLine, 0)
+
+	// Создаем новые соединения на основе данных из менеджера программ
 	for _, conn := range p.programMgr.program.Connections {
 		p.createVisualConnection(conn.FromBlockID, conn.ToBlockID)
 	}

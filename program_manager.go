@@ -524,6 +524,57 @@ func (pm *ProgramManager) AddConnection(fromBlockID, toBlockID int) bool {
 	return true
 }
 
+// RemoveBlock полностью удаляет блок
+func (pm *ProgramManager) RemoveBlock(blockID int) bool {
+	// Находим блок
+	var blockToRemove *ProgramBlock
+	var newBlocks []*ProgramBlock
+
+	for _, block := range pm.program.Blocks {
+		if block.ID != blockID {
+			newBlocks = append(newBlocks, block)
+		} else {
+			blockToRemove = block
+		}
+	}
+
+	if blockToRemove == nil {
+		return false
+	}
+
+	// Обновляем блоки
+	pm.program.Blocks = newBlocks
+
+	// Удаляем все соединения, связанные с этим блоком
+	var newConnections []*Connection
+	for _, conn := range pm.program.Connections {
+		if conn.FromBlockID != blockID && conn.ToBlockID != blockID {
+			newConnections = append(newConnections, conn)
+		} else {
+			// Если соединение вело к удаляемому блоку, сбрасываем NextBlockID
+			if conn.FromBlockID != blockID {
+				for _, block := range newBlocks {
+					if block.ID == conn.FromBlockID {
+						block.NextBlockID = 0
+					}
+				}
+			}
+		}
+	}
+	pm.program.Connections = newConnections
+
+	// Если удаляемый блок был начальным, ищем новый начальный блок
+	if blockToRemove.IsStart && len(newBlocks) > 0 {
+		// Делаем первый блок начальным
+		newBlocks[0].IsStart = true
+	}
+
+	pm.program.Modified = time.Now()
+
+	log.Printf("Блок %d полностью удален из программы", blockID)
+	return true
+}
+
 // RemoveConnection удаляет соединение
 func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
 	for i, conn := range pm.program.Connections {
