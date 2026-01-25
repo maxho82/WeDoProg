@@ -205,16 +205,30 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 
 		// Блоки в категории
 		for _, blockType := range category.blocks {
-			blockButton := widget.NewButton(gui.getBlockName(blockType), func(bt BlockType) func() {
+			// Проверяем, доступен ли блок
+			blockName := gui.getBlockName(blockType)
+
+			blockButton := widget.NewButton(blockName, func(bt BlockType) func() {
 				return func() {
 					// Добавляем блок в программу
 					block := gui.programMgr.CreateBlock(bt, 100, 100)
 					gui.programPanel.AddBlock(block)
-					gui.updateBlocksPanel()
+
+					// Обновляем состояние кнопок панели инструментов
+					hasProgram := len(gui.programMgr.program.Blocks) > 0
+					gui.updateToolbarState(gui.hubMgr.IsConnected(), hasProgram)
+
+					log.Printf("Добавлен новый блок: %s (ID: %d)", block.Title, block.ID)
 				}
 			}(blockType))
 
 			blockButton.Importance = widget.LowImportance
+
+			// Блокируем кнопку, если блок недоступен
+			if enabled, exists := gui.availableBlocks[blockType]; exists && !enabled && blockType != BlockTypeStart && blockType != BlockTypeWait && blockType != BlockTypeLoop && blockType != BlockTypeStop && blockType != BlockTypeCondition {
+				blockButton.Disable()
+			}
+
 			blocksContainer.Add(blockButton)
 		}
 
@@ -222,7 +236,7 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	}
 
 	scroll := container.NewVScroll(container.NewPadded(blocksContainer))
-	scroll.SetMinSize(fyne.NewSize(220, 600)) // Увеличиваем ширину
+	scroll.SetMinSize(fyne.NewSize(220, 600))
 	return scroll
 }
 
@@ -286,32 +300,14 @@ func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
 		if ok {
 			container.Objects = nil
 
-			// Добавляем заголовок
-			title := widget.NewLabelWithStyle(
-				fmt.Sprintf("Свойства: %s", block.Title),
-				fyne.TextAlignCenter,
-				fyne.TextStyle{Bold: true},
-			)
-			container.Add(title)
-			container.Add(widget.NewSeparator())
+			// Создаем редактор свойств блока
+			editor := NewBlockEditor(block, gui.deviceMgr, func(updatedBlock *ProgramBlock) {
+				// Сохраняем изменения в менеджере программ
+				gui.programMgr.UpdateBlock(updatedBlock.ID, updatedBlock.Parameters)
+				log.Printf("Параметры блока %d обновлены", updatedBlock.ID)
+			})
 
-			// Добавляем информацию о блоке
-			container.Add(widget.NewLabel(fmt.Sprintf("ID: %d", block.ID)))
-			container.Add(widget.NewLabel(fmt.Sprintf("Тип: %s", gui.getBlockName(block.Type))))
-			container.Add(widget.NewLabel(fmt.Sprintf("Позиция: (%.0f, %.0f)", block.X, block.Y)))
-
-			// Добавляем параметры
-			if len(block.Parameters) > 0 {
-				container.Add(widget.NewSeparator())
-				paramsLabel := widget.NewLabel("Параметры:")
-				paramsLabel.TextStyle.Bold = true
-				container.Add(paramsLabel)
-
-				for key, value := range block.Parameters {
-					container.Add(widget.NewLabel(fmt.Sprintf("  %s: %v", key, value)))
-				}
-			}
-
+			container.Add(editor.GetContainer())
 			container.Refresh()
 			gui.propertiesPanel.Refresh()
 		}

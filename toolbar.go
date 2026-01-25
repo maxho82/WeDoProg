@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
@@ -55,16 +57,24 @@ func (t *Toolbar) buildUI() *fyne.Container {
 
 	// Кнопки управления программой
 	t.runButton = widget.NewButtonWithIcon("Запуск", theme.MediaPlayIcon(), func() {
-		if t.gui.programMgr != nil {
-			t.gui.programMgr.RunProgram()
+		if t.gui != nil && t.gui.programMgr != nil {
+			log.Println("Запуск программы...")
+			err := t.gui.programMgr.RunProgram()
+			if err != nil {
+				log.Printf("Ошибка запуска программы: %v", err)
+				// Можно показать сообщение об ошибке
+			} else {
+				log.Println("Программа успешно запущена")
+			}
 		}
 	})
 	t.runButton.Importance = widget.HighImportance
 	t.runButton.Disable() // По умолчанию выключена
 
 	t.stopButton = widget.NewButtonWithIcon("Стоп", theme.MediaStopIcon(), func() {
-		if t.gui.programMgr != nil {
+		if t.gui != nil && t.gui.programMgr != nil {
 			t.gui.programMgr.StopProgram()
+			log.Println("Программа остановлена")
 		}
 	})
 	t.stopButton.Importance = widget.MediumImportance

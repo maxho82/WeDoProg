@@ -479,3 +479,29 @@ func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
 func (pm *ProgramManager) GetProgramState() ProgramState {
 	return pm.currentState
 }
+
+// UpdateBlockPosition обновляет позицию блока
+/* func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
+	for _, block := range pm.program.Blocks {
+		if block.ID == blockID {
+			block.X = x
+			block.Y = y
+			block.DragStartPos = fyne.NewPos(float32(x), float32(y))
+			pm.program.Modified = time.Now()
+			return true
+		}
+	}
+	return false
+} */
+// UpdateBlockPosition обновляет позицию блока
+func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
+	for _, block := range pm.program.Blocks {
+		if block.ID == blockID {
+			block.X = x
+			block.Y = y
+			pm.program.Modified = time.Now()
+			return true
+		}
+	}
+	return false
+}

@@ -16,6 +16,7 @@ type ProgramPanel struct {
 	content     *fyne.Container
 	programMgr  *ProgramManager
 	connections []*ConnectionLine
+	lastBlockY  float64
 }
 
 // ConnectionLine линия соединения между блоками
@@ -31,6 +32,7 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 		gui:         gui,
 		programMgr:  programMgr,
 		connections: make([]*ConnectionLine, 0),
+		lastBlockY:  50, // Начальная Y-координата для первого блока
 	}
 
 	panel.content = container.NewWithoutLayout()
@@ -81,11 +83,129 @@ func (p *ProgramPanel) addGrid() {
 
 // AddBlock добавляет блок на холст
 func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
-	blockWidget := NewDraggableBlock(block, p.programMgr)
+	// Устанавливаем позицию блока
+	block.X = 100
+	block.Y = p.lastBlockY
+	block.DragStartPos = fyne.NewPos(float32(block.X), float32(block.Y))
+
+	blockWidget := NewDraggableBlock(block, p.programMgr, p.gui)
+	blockWidget.Resize(fyne.NewSize(float32(block.Width), float32(block.Height)))
+	blockWidget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
+
 	p.content.Add(blockWidget)
 	p.content.Refresh()
 
-	log.Printf("Блок добавлен на холст: %s (ID: %d)", block.Title, block.ID)
+	// Автоматически соединяем с предыдущим блоком
+	p.autoConnectBlock(block)
+
+	// Обновляем позицию для следующего блока
+	p.lastBlockY += block.Height + 40 // Отступ между блоками
+
+	log.Printf("Блок добавлен на холст: %s (ID: %d) на позиции (%.0f, %.0f)",
+		block.Title, block.ID, block.X, block.Y)
+}
+
+// autoConnectBlock автоматически соединяет блок с предыдущим
+func (p *ProgramPanel) autoConnectBlock(newBlock *ProgramBlock) {
+	// Находим последний добавленный блок (кроме текущего)
+	var lastBlock *ProgramBlock
+	for _, block := range p.programMgr.program.Blocks {
+		if block.ID != newBlock.ID {
+			lastBlock = block
+		}
+	}
+
+	if lastBlock != nil {
+		// Добавляем соединение в менеджер программ
+		p.programMgr.AddConnection(lastBlock.ID, newBlock.ID)
+
+		// Создаем визуальное соединение
+		p.createVisualConnection(lastBlock.ID, newBlock.ID)
+
+		log.Printf("Автоматическое соединение: блок %d -> блок %d", lastBlock.ID, newBlock.ID)
+	}
+}
+
+// createVisualConnection создает визуальное соединение между блоками
+func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
+	// Находим виджеты блоков
+	var fromWidget, toWidget *DraggableBlock
+	for _, obj := range p.content.Objects {
+		if block, ok := obj.(*DraggableBlock); ok {
+			if block.block.ID == fromBlockID {
+				fromWidget = block
+			} else if block.block.ID == toBlockID {
+				toWidget = block
+			}
+		}
+	}
+
+	if fromWidget == nil || toWidget == nil {
+		log.Printf("Не удалось найти виджеты для соединения %d -> %d", fromBlockID, toBlockID)
+		return
+	}
+
+	// Получаем позиции коннекторов
+	fromPos := fromWidget.GetBottomConnectorPosition()
+	toPos := toWidget.GetTopConnectorPosition()
+
+	// Создаем линию соединения
+	line := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
+	line.Position1 = fromPos
+	line.Position2 = toPos
+	line.StrokeWidth = 2
+
+	// Добавляем стрелку на конце линии (простой вариант)
+	p.addSimpleArrowHead(line, fromPos, toPos)
+
+	p.content.Add(line)
+	// Перемещаем линию на задний план (после фона, но перед блоками)
+	// Для простоты просто добавляем в конец
+	p.content.Objects = append([]fyne.CanvasObject{line}, p.content.Objects...)
+
+	// Сохраняем соединение
+	connection := &ConnectionLine{
+		line:        line,
+		fromBlockID: fromBlockID,
+		toBlockID:   toBlockID,
+	}
+
+	p.connections = append(p.connections, connection)
+	p.content.Refresh()
+}
+
+// addSimpleArrowHead добавляет простую стрелку на конце линии
+func (p *ProgramPanel) addSimpleArrowHead(line *canvas.Line, fromPos, toPos fyne.Position) {
+	// Простая реализация: просто делаем линию немного толще на конце
+	// В реальном приложении можно добавить настоящую стрелку
+	line.StrokeWidth = 2
+}
+
+// updateConnections обновляет все соединения
+func (p *ProgramPanel) updateConnections() {
+	for _, conn := range p.connections {
+		// Находим виджеты блоков
+		var fromWidget, toWidget *DraggableBlock
+		for _, obj := range p.content.Objects {
+			if block, ok := obj.(*DraggableBlock); ok {
+				if block.block.ID == conn.fromBlockID {
+					fromWidget = block
+				} else if block.block.ID == conn.toBlockID {
+					toWidget = block
+				}
+			}
+		}
+
+		if fromWidget != nil && toWidget != nil {
+			// Обновляем позиции линии
+			fromPos := fromWidget.GetBottomConnectorPosition()
+			toPos := toWidget.GetTopConnectorPosition()
+
+			conn.line.Position1 = fromPos
+			conn.line.Position2 = toPos
+			conn.line.Refresh()
+		}
+	}
 }
 
 // RemoveBlock удаляет блок с холста
@@ -106,9 +226,16 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 func (p *ProgramPanel) removeConnectionsForBlock(blockID int) {
 	var newConnections []*ConnectionLine
 	for _, conn := range p.connections {
-		if conn.fromBlockID != blockID && conn.toBlockID != blockID {
+		if conn.fromBlockID == blockID || conn.toBlockID == blockID {
+			// Удаляем линию из контейнера
+			for i, obj := range p.content.Objects {
+				if obj == conn.line {
+					p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
+					break
+				}
+			}
+		} else {
 			newConnections = append(newConnections, conn)
-			p.content.Remove(conn.line)
 		}
 	}
 	p.connections = newConnections
@@ -149,14 +276,13 @@ func (p *ProgramPanel) Clear() {
 
 	p.content.Objects = newObjects
 	p.connections = make([]*ConnectionLine, 0)
+	p.lastBlockY = 50
 	p.content.Refresh()
 }
 
 // UpdateConnectionPositions обновляет позиции соединений
 func (p *ProgramPanel) UpdateConnectionPositions() {
 	for _, conn := range p.connections {
-		// Здесь должна быть логика обновления позиций линий
-		// когда блоки перемещаются
 		conn.line.Refresh()
 	}
 }
@@ -179,6 +305,15 @@ func (p *ProgramPanel) GetBlockAtPosition(pos fyne.Position) *ProgramBlock {
 
 // ShowProperties показывает свойства выбранного блока
 func (p *ProgramPanel) ShowProperties(block *ProgramBlock) {
-	// Реализуется в главном GUI
 	p.gui.showBlockProperties(block)
+}
+
+// GetBlockWidget возвращает виджет блока по ID
+func (p *ProgramPanel) GetBlockWidget(blockID int) *DraggableBlock {
+	for _, obj := range p.content.Objects {
+		if block, ok := obj.(*DraggableBlock); ok && block.block.ID == blockID {
+			return block
+		}
+	}
+	return nil
 }

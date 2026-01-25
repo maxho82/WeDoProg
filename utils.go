@@ -4,7 +4,6 @@ package main
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // DeviceTypeToBlockType преобразует тип устройства в тип блока
@@ -84,7 +83,7 @@ func (hm *HubManager) GetConnectedDevices() []*Device {
 	return devices
 }
 
-// UpdateBlockPosition обновляет позицию блока
+/* // UpdateBlockPosition обновляет позицию блока
 func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
 	for _, block := range pm.program.Blocks {
 		if block.ID == blockID {
@@ -96,3 +95,4 @@ func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
 	}
 	return false
 }
+*/
