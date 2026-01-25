@@ -74,7 +74,6 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 }
 
 // BuildUI строит интерфейс приложения
-// BuildUI строит интерфейс приложения
 func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	// Создаем панели
 	toolbar := gui.createToolbar()
