@@ -220,18 +220,6 @@ func (gui *MainGUI) createProgramPanel() *container.Scroll {
 	return container.NewVScroll(widget.NewLabel("Панель программирования"))
 }
 
-// createStatusBar создает строку состояния
-/* func (gui *MainGUI) createStatusBar() fyne.CanvasObject { // Измените возвращаемый тип
-	statusText := widget.NewLabel("Готов")
-	statusText.Alignment = fyne.TextAlignCenter
-
-	return container.NewHBox( // Теперь возвращаем fyne.CanvasObject
-		layout.NewSpacer(),
-		statusText,
-		layout.NewSpacer(),
-	)
-} */
-
 // showProtocolTestDialog показывает диалог тестирования протокола
 func (gui *MainGUI) showProtocolTestDialog() {
 	dialog := NewProtocolTestDialog(gui, gui.window)
@@ -388,17 +376,19 @@ func (gui *MainGUI) connectToHub(address string) {
 				// Запускаем обнаружение портов через 3 секунды
 				// После успешного подключения
 				go func() {
-					time.Sleep(2 * time.Second) // Ждем инициализации
-					log.Println("Запуск автоматического обнаружения устройств...")
+					time.Sleep(3 * time.Second)
+					log.Println("Запуск улучшенного обнаружения устройств...")
 
-					if gui.hubMgr != nil {
-						gui.hubMgr.autoDetectDevices()
+					if gui.hubMgr != nil && gui.hubMgr.IsConnected() {
+						gui.hubMgr.autoDetectDevicesV2()
 					}
 
 					// Обновляем GUI
-					time.Sleep(1 * time.Second)
+					time.Sleep(2 * time.Second)
 					fyne.Do(func() {
 						gui.updateDeviceList()
+						gui.updateAvailableBlocks()
+						gui.ForceUpdateUI() // Принудительное обновление UI
 					})
 				}()
 			}
@@ -514,7 +504,7 @@ func (gui *MainGUI) createDevicePanel() *container.Scroll {
 
 			// Запускаем автоматическое определение
 			if gui.hubMgr != nil {
-				gui.hubMgr.autoDetectDevices()
+				gui.hubMgr.autoDetectDevicesV2()
 			}
 
 			// Обновляем список устройств

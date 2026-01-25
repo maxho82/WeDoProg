@@ -188,7 +188,7 @@ func (hm *HubManager) Connect(address string) error {
 	// После успешного подключения проверяем устройства
 	go func() {
 		time.Sleep(2 * time.Second) // Ждем, пока все службы инициализируются
-		hm.CheckConnectedDevices()
+		//hm.CheckConnectedDevices()
 	}()
 
 	return nil
@@ -369,48 +369,21 @@ func (hm *HubManager) subscribeToBatteryNotifications() {
 	}
 }
 
-// subscribeToPortNotifications подписывается на уведомления портов
+// subscribeToPortNotifications подписывается на уведомления о портах
 func (hm *HubManager) subscribeToPortNotifications() {
 	portInfoUUID := PORT_INFO_UUID
 
 	if char, exists := hm.characteristics[portInfoUUID]; exists {
 		err := char.EnableNotifications(func(data []byte) {
-			msg := ParsePortMessage(data)
-			if msg == nil {
-				return
-			}
-
-			log.Printf("Сообщение о порте: порт=%d, событие=0x%02x, данные=%x",
-				msg.PortID, msg.EventType, data)
-
-			if msg.IsConnectionEvent() {
-				deviceType := msg.GetDeviceType()
-
-				if deviceType == 0x00 {
-					log.Printf("Не удалось определить тип устройства для порта %d. Данные: %x",
-						msg.PortID, data)
-					// Попробуем определить по эвристике
-					deviceType = hm.guessDeviceType(msg.PortID)
-				}
-
-				if deviceType != 0x00 {
-					hm.handleDeviceConnection(msg.PortID, deviceType, data)
-				}
-			} else if msg.IsDisconnectionEvent() {
-				hm.handleDeviceDisconnection(msg.PortID)
-			}
+			// Обрабатываем уведомление
+			hm.handlePortNotification(data)
 		})
 
 		if err != nil {
 			log.Printf("Ошибка подписки на информацию о портах: %v", err)
-			// Запускаем ручное обнаружение
-			hm.manualPortDiscovery()
 		} else {
 			log.Println("Подписка на информацию о портах установлена")
 			hm.subscribedCharacteristics[portInfoUUID] = true
-
-			// Запрашиваем информацию о портах
-			hm.sendPortInformationRequest()
 		}
 	} else {
 		log.Printf("Характеристика информации о портах не найдена")
@@ -441,72 +414,6 @@ func (hm *HubManager) guessDeviceType(portID byte) byte {
 	return 0x00
 }
 
-// manualPortDiscovery ручное обнаружение портов
-func (hm *HubManager) manualPortDiscovery() {
-	log.Println("Ручное обнаружение портов...")
-
-	// Просто предполагаем стандартную конфигурацию WeDo 2.0
-	devices := []struct {
-		port       byte
-		deviceType byte
-		name       string
-	}{
-		{1, DEVICE_TYPE_MOTOR, "Мотор"},
-		{2, DEVICE_TYPE_MOTION_SENSOR, "Датчик расстояния"},
-	}
-
-	for _, dev := range devices {
-		// Проверяем, отвечает ли порт
-		hm.testPortWithDeviceType(dev.port, dev.deviceType, dev.name)
-	}
-}
-
-// testPortWithDeviceType тестирует порт с заданным типом устройства
-func (hm *HubManager) testPortWithDeviceType(portID byte, deviceType byte, name string) {
-	log.Printf("Тестирование порта %d как %s...", portID, name)
-
-	var setupCmd []byte
-
-	switch deviceType {
-	case DEVICE_TYPE_MOTOR:
-		setupCmd = []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-	case DEVICE_TYPE_MOTION_SENSOR:
-		setupCmd = []byte{0x01, 0x02, portID, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-	case DEVICE_TYPE_TILT_SENSOR:
-		setupCmd = []byte{0x01, 0x02, portID, 0x22, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-	default:
-		return
-	}
-
-	err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
-	if err != nil {
-		log.Printf("Порт %d: ошибка настройки %s - %v", portID, name, err)
-	} else {
-		log.Printf("Порт %d: успешно настроен как %s", portID, name)
-
-		// Регистрируем устройство
-		device := &Device{
-			PortID:      portID,
-			DeviceType:  deviceType,
-			Name:        name,
-			IsConnected: true,
-			LastUpdate:  time.Now(),
-			Properties:  make(map[string]interface{}),
-		}
-
-		hm.devices[portID] = device
-
-		// Уведомляем GUI
-		if hm.deviceUpdateCallback != nil {
-			hm.deviceUpdateCallback(portID, device)
-		}
-
-		// Пробуем получить данные от устройства
-		time.Sleep(300 * time.Millisecond)
-		hm.readDeviceData(portID, deviceType) // Теперь этот метод существует
-	}
-}
-
 // sendPortInformationRequest отправляет запрос информации о портах
 func (hm *HubManager) sendPortInformationRequest() {
 	log.Println("Отправка запроса информации о портах...")
@@ -520,167 +427,6 @@ func (hm *HubManager) sendPortInformationRequest() {
 		log.Printf("Ошибка запроса информации о портах: %v", err)
 	} else {
 		log.Println("Запрос информации о портах отправлен")
-	}
-}
-
-// requestPortInfo запрашивает информацию о портах
-func (hm *HubManager) requestPortInfo() {
-	log.Println("Запрос информации о портах...")
-
-	// Запрашиваем информацию о портах 1 и 2
-	for port := byte(1); port <= 2; port++ {
-		// Команда запроса информации о порте
-		cmd := []byte{0x01, 0x00, port, 0x00}
-		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
-
-		if err != nil {
-			log.Printf("Ошибка запроса информации о порте %d: %v", port, err)
-		} else {
-			log.Printf("Запрос информации о порте %d отправлен", port)
-		}
-
-		// Небольшая задержка между запросами
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// requestPortInfoDirectly пытается прочитать информацию о портах напрямую
-func (hm *HubManager) requestPortInfoDirectly() {
-	log.Println("Прямой запрос информации о портах...")
-
-	portInfoUUID := PORT_INFO_UUID
-
-	if char, exists := hm.characteristics[portInfoUUID]; exists {
-		for port := byte(1); port <= 2; port++ {
-			// Отправляем команду запроса информации о порте
-			cmd := []byte{0x01, 0x00, port, 0x00}
-			err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
-
-			if err != nil {
-				log.Printf("Ошибка отправки запроса порта %d: %v", port, err)
-				continue
-			}
-
-			// Ждем немного, затем читаем характеристику
-			time.Sleep(200 * time.Millisecond)
-
-			data, err := hm.readCharacteristic(char)
-			if err != nil {
-				log.Printf("Ошибка чтения информации о порте %d: %v", port, err)
-				continue
-			}
-
-			if len(data) >= 3 {
-				portID := data[1]
-				eventType := data[2]
-
-				log.Printf("Прямое чтение порта %d: событие=%d, данные=%x",
-					portID, eventType, data)
-
-				if eventType == 0x01 && len(data) >= 8 {
-					deviceType := data[4]
-					hm.handleDeviceConnection(portID, deviceType, data)
-				}
-			}
-		}
-	}
-}
-
-// requestCurrentPortStatus запрашивает текущее состояние портов
-func (hm *HubManager) requestCurrentPortStatus() {
-	log.Println("Запрос текущего состояния портов...")
-
-	// Отправляем команду для получения статуса всех портов
-	// Команда: Hub Property - Request Update (0x01), Property: Port Status (0x02)
-	cmd := []byte{0x01, 0x01, 0x02}
-	err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
-
-	if err != nil {
-		log.Printf("Ошибка запроса состояния портов: %v", err)
-	} else {
-		log.Println("Запрос состояния портов отправлен")
-	}
-}
-
-// discoverPortsViaAlternativeMethod альтернативный метод обнаружения портов
-func (hm *HubManager) discoverPortsViaAlternativeMethod() {
-	log.Println("Альтернативное обнаружение портов...")
-
-	// Метод 1: Попробовать настроить устройства и посмотреть на реакцию
-	hm.testPortWithMotor()
-	time.Sleep(500 * time.Millisecond)
-	hm.testPortWithSensor()
-}
-
-// testPortWithMotor тестирует порт с командой мотора
-func (hm *HubManager) testPortWithMotor() {
-	log.Println("Тестирование портов с командой мотора...")
-
-	for port := byte(1); port <= 2; port++ {
-		// Настраиваем мотор
-		setupCmd := []byte{0x01, 0x02, port, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
-
-		if err != nil {
-			log.Printf("Порт %d: ошибка настройки мотора - %v", port, err)
-		} else {
-			log.Printf("Порт %d: команда настройки мотора отправлена", port)
-
-			// Пробуем запустить мотор на минимальной мощности
-			time.Sleep(200 * time.Millisecond)
-			motorCmd := []byte{port, 0x01, 0x01, 0x10} // 0x10 = минимальная скорость вперед
-			err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, motorCmd)
-
-			if err != nil {
-				log.Printf("Порт %d: ошибка запуска мотора - возможно, не мотор", port)
-			} else {
-				log.Printf("Порт %d: мотор запущен (минимальная скорость)", port)
-
-				// Останавливаем мотор
-				time.Sleep(300 * time.Millisecond)
-				stopCmd := []byte{port, 0x01, 0x01, 0x00}
-				hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
-
-				// Регистрируем как мотор
-				hm.registerDevice(port, DEVICE_TYPE_MOTOR, "Мотор")
-			}
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-}
-
-// testPortWithSensor тестирует порт с командой датчика
-func (hm *HubManager) testPortWithSensor() {
-	log.Println("Тестирование портов с командой датчика...")
-
-	for port := byte(1); port <= 2; port++ {
-		// Настраиваем датчик расстояния
-		setupCmd := []byte{0x01, 0x02, port, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
-
-		if err != nil {
-			log.Printf("Порт %d: ошибка настройки датчика расстояния - %v", port, err)
-		} else {
-			log.Printf("Порт %d: команда настройки датчика расстояния отправлена", port)
-
-			// Читаем значение сенсора
-			time.Sleep(300 * time.Millisecond)
-			data, err := hm.ReadCharacteristic(SENSOR_VALUES_UUID)
-			if err != nil {
-				log.Printf("Порт %d: ошибка чтения сенсора - %v", port, err)
-			} else if len(data) > 0 {
-				log.Printf("Порт %d: получены данные сенсора: %x", port, data)
-
-				// Проверяем, соответствует ли ответ формату датчика
-				if len(data) >= 3 && data[1] == port {
-					// Регистрируем как датчик расстояния
-					hm.registerDevice(port, DEVICE_TYPE_MOTION_SENSOR, "Датчик расстояния")
-				}
-			}
-		}
-
-		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -702,47 +448,6 @@ func (hm *HubManager) registerDevice(portID byte, deviceType byte, name string) 
 	// Уведомляем GUI
 	if hm.deviceUpdateCallback != nil {
 		hm.deviceUpdateCallback(portID, device)
-	}
-}
-
-// discoverPortsManually пытается обнаружить порты вручную
-func (hm *HubManager) discoverPortsManually() {
-	log.Println("Ручное обнаружение портов...")
-
-	// Попробуем отправить команды настройки для всех возможных портов
-	// и посмотреть, какие ответят
-
-	portsToCheck := []byte{1, 2} // Порты WeDo 2.0
-
-	for _, port := range portsToCheck {
-		// Пытаемся настроить мотор (даже если его нет)
-		motorCmd := []byte{0x01, 0x02, port, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, motorCmd)
-
-		if err != nil {
-			log.Printf("Порт %d: ошибка настройки мотора - устройство может отсутствовать", port)
-		} else {
-			log.Printf("Порт %d: команда настройки мотора отправлена", port)
-
-			// Предполагаем, что устройство есть
-			// В реальном приложении нужно ждать ответа
-			device := &Device{
-				PortID:      port,
-				DeviceType:  DEVICE_TYPE_MOTOR,
-				Name:        "Мотор (предположительно)",
-				IsConnected: true,
-				LastUpdate:  time.Now(),
-			}
-
-			hm.devices[port] = device
-
-			// Уведомляем GUI
-			if hm.deviceUpdateCallback != nil {
-				hm.deviceUpdateCallback(port, device)
-			}
-		}
-
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -793,29 +498,10 @@ func (hm *HubManager) subscribeToFirmwareNotifications() {
 }
 
 // handleDeviceConnection обрабатывает подключение устройства
-/* func (hm *HubManager) handleDeviceConnection(portID byte, deviceType byte, data []byte) {
-	log.Printf("Устройство подключено к порту %d, тип: 0x%02x", portID, deviceType)
 
-	// Создаем информацию об устройстве
-	device := &Device{
-		PortID:      portID,
-		DeviceType:  deviceType,
-		Name:        hm.getDeviceName(deviceType),
-		IsConnected: true,
-		LastUpdate:  time.Now(),
-	}
-
-	// Настраиваем устройство в зависимости от типа
-	hm.configureDevice(portID, deviceType)
-
-	// Уведомляем об обновлении
-	if hm.deviceUpdateCallback != nil {
-		hm.deviceUpdateCallback(portID, device)
-	}
-} */
 func (hm *HubManager) handleDeviceConnection(portID byte, deviceType byte, data []byte) {
-	log.Printf("Устройство подключено к порту %d, тип: 0x%02x, данные: %x",
-		portID, deviceType, data)
+	log.Printf("Устройство подключено к порту %d, тип: 0x%02x (%s)",
+		portID, deviceType, hm.getDeviceName(deviceType))
 
 	// Создаем информацию об устройстве
 	device := &Device{
@@ -830,16 +516,23 @@ func (hm *HubManager) handleDeviceConnection(portID byte, deviceType byte, data 
 	// Сохраняем устройство
 	hm.devices[portID] = device
 
-	// Настраиваем устройство в зависимости от типа
+	// Настраиваем устройство в отдельной горутине с задержкой
 	go func() {
-		time.Sleep(500 * time.Millisecond) // Даем время на подключение
+		// Ждем перед настройкой, чтобы избежать конфликтов
+		time.Sleep(1 * time.Second)
+
+		log.Printf("Настройка устройства на порту %d (тип: 0x%02x)", portID, deviceType)
+
+		// Настраиваем устройство в зависимости от типа
 		err := hm.configureDevice(portID, deviceType)
 		if err != nil {
-			log.Printf("Ошибка настройки устройства: %v", err)
-			// Не помечаем как отключенное, т.к. оно может работать без настройки
+			log.Printf("Ошибка настройки устройства на порту %d: %v", portID, err)
+			// Не помечаем как отключенное, т.к. устройство может работать без настройки
+		} else {
+			log.Printf("Устройство на порту %d успешно настроено", portID)
 		}
 
-		// Уведомляем об обновлении
+		// Уведомляем GUI
 		if hm.deviceUpdateCallback != nil {
 			hm.deviceUpdateCallback(portID, device)
 		}
@@ -1024,20 +717,367 @@ func (hm *HubManager) SetConnectionStateCallback(callback func(isConnected bool)
 	hm.connectionStateCallback = callback
 }
 
-// autoDetectDevices автоматически определяет подключенные устройства
-func (hm *HubManager) autoDetectDevices() {
-	log.Println("Автоматическое определение устройств...")
+// autoDetectDevicesV2 - улучшенная функция обнаружения устройств
+func (hm *HubManager) autoDetectDevicesV2() {
+	log.Println("=== Автоматическое обнаружение устройств ===")
 
-	// Стандартная конфигурация WeDo 2.0
-	// Порт 1: Мотор
-	// Порт 2: Датчик (расстояния или наклона)
+	if !hm.IsConnected() {
+		log.Println("Не подключено к хабу, пропускаем обнаружение")
+		return
+	}
 
-	// Проверяем порт 1 (мотор)
-	hm.detectMotor(1)
-	time.Sleep(500 * time.Millisecond)
+	// Ждем, чтобы уведомления о портах успели прийти
+	log.Println("Ожидание уведомлений о подключенных устройствах...")
+	time.Sleep(5 * time.Second)
 
-	// Проверяем порт 2 (датчик)
-	hm.detectSensor(2)
+	// Проверяем, какие устройства уже обнаружены через уведомления
+	log.Println("Проверка обнаруженных устройств:")
+	for port := byte(1); port <= 6; port++ {
+		if device, exists := hm.devices[port]; exists && device.IsConnected {
+			log.Printf("  Порт %d: %s", port, device.Name)
+		}
+	}
+
+	// Если какие-то порты (1, 2, 6) не обнаружены, пытаемся обнаружить их вручную
+	portsToCheck := []byte{1, 2, 6}
+
+	for _, portID := range portsToCheck {
+		if _, exists := hm.devices[portID]; !exists {
+			log.Printf("Порт %d не обнаружен автоматически, запускаем ручное обнаружение...", portID)
+			hm.manualDeviceDetection(portID)
+			time.Sleep(3 * time.Second)
+		}
+	}
+
+	log.Println("=== Обнаружение устройств завершено ===")
+}
+
+// manualDeviceDetection ручное обнаружение устройства на порту
+func (hm *HubManager) manualDeviceDetection(portID byte) {
+	log.Printf("Ручное обнаружение на порту %d", portID)
+
+	// Проверяем наиболее вероятные устройства для данного порта
+	if portID == 6 {
+		// Порт 6 - встроенный RGB светодиод
+		hm.detectBuiltInLED()
+		return
+	}
+
+	// Для портов 1 и 2 пробуем разные типы устройств
+	deviceTypes := []struct {
+		name       string
+		deviceType byte
+		setupCmd   []byte
+	}{
+		{"Мотор", DEVICE_TYPE_MOTOR, []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}},
+		{"Датчик наклона", DEVICE_TYPE_TILT_SENSOR, []byte{0x01, 0x02, portID, 0x22, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}},
+		{"Датчик расстояния", DEVICE_TYPE_MOTION_SENSOR, []byte{0x01, 0x02, portID, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}},
+	}
+
+	for _, dev := range deviceTypes {
+		log.Printf("Порт %d: проверка %s...", portID, dev.name)
+
+		// Настраиваем устройство
+		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, dev.setupCmd)
+		if err != nil {
+			log.Printf("Порт %d: ошибка настройки %s - %v", portID, dev.name, err)
+			continue
+		}
+
+		time.Sleep(2 * time.Second)
+
+		// Для мотора тестируем запуск
+		if dev.deviceType == DEVICE_TYPE_MOTOR {
+			runCmd := []byte{portID, 0x01, 0x01, 0x05} // Очень низкая скорость
+			err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, runCmd)
+			if err != nil {
+				log.Printf("Порт %d: не удалось запустить мотор - %v", portID, err)
+				continue
+			}
+
+			time.Sleep(300 * time.Millisecond)
+
+			// Останавливаем мотор
+			stopCmd := []byte{portID, 0x01, 0x01, 0x00}
+			hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
+		}
+
+		// Регистрируем устройство
+		device := &Device{
+			PortID:      portID,
+			DeviceType:  dev.deviceType,
+			Name:        dev.name,
+			IsConnected: true,
+			LastUpdate:  time.Now(),
+			Properties:  make(map[string]interface{}),
+		}
+
+		hm.devices[portID] = device
+
+		// Уведомляем GUI
+		if hm.deviceUpdateCallback != nil {
+			hm.deviceUpdateCallback(portID, device)
+		}
+
+		log.Printf("Порт %d: обнаружен %s", portID, dev.name)
+		return // Успешно обнаружили устройство
+	}
+
+	log.Printf("Порт %d: устройства не обнаружены", portID)
+}
+
+// isPortOccupied проверяет, занят ли порт
+func (hm *HubManager) isPortOccupied(portID byte) bool {
+	if device, exists := hm.devices[portID]; exists {
+		return device.IsConnected
+	}
+	return false
+}
+
+func (hm *HubManager) safeDetectPort(portID byte) {
+	log.Printf("Безопасное обнаружение на порту %d", portID)
+
+	// Проверяем, не обнаружили ли мы уже устройство через уведомления
+	if device, exists := hm.devices[portID]; exists && device.IsConnected {
+		log.Printf("Порт %d уже занят устройством: %s", portID, device.Name)
+		return
+	}
+
+	// Список типов устройств для проверки (в порядке приоритета)
+	deviceTypes := []struct {
+		name       string
+		deviceType byte
+		setupCmd   []byte
+		isSensor   bool
+	}{
+		// Для порта 1 сначала пробуем мотор
+		{"Мотор", DEVICE_TYPE_MOTOR, []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}, false},
+		{"Датчик наклона", DEVICE_TYPE_TILT_SENSOR, []byte{0x01, 0x02, portID, 0x22, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}, true},
+		{"Датчик расстояния", DEVICE_TYPE_MOTION_SENSOR, []byte{0x01, 0x02, portID, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}, true},
+	}
+
+	for _, dev := range deviceTypes {
+		log.Printf("Порт %d: проверка %s...", portID, dev.name)
+
+		// Отправляем команду настройки
+		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, dev.setupCmd)
+		if err != nil {
+			log.Printf("Порт %d: ошибка настройки %s - %v", portID, dev.name, err)
+			time.Sleep(2 * time.Second) // Ждем перед следующей попыткой
+			continue
+		}
+
+		time.Sleep(2 * time.Second) // Даем время на настройку
+
+		if dev.deviceType == DEVICE_TYPE_MOTOR {
+			// Для мотора пробуем запустить и остановить
+			runCmd := []byte{portID, 0x01, 0x01, 0x10} // Минимальная скорость
+			err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, runCmd)
+			if err != nil {
+				log.Printf("Порт %d: ошибка запуска мотора - %v", portID, err)
+				continue
+			}
+
+			time.Sleep(500 * time.Millisecond)
+
+			// Останавливаем
+			stopCmd := []byte{portID, 0x01, 0x01, 0x00}
+			hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
+
+			log.Printf("Порт %d: обнаружен мотор", portID)
+		} else {
+			// Для датчиков читаем значение
+			time.Sleep(1 * time.Second)
+			data, err := hm.ReadCharacteristic(SENSOR_VALUES_UUID)
+			if err == nil && len(data) >= 4 && data[1] == portID {
+				log.Printf("Порт %d: обнаружен %s, данные: %x", portID, dev.name, data)
+			} else {
+				log.Printf("Порт %d: %s не отвечает", portID, dev.name)
+				continue
+			}
+		}
+
+		// Успешно обнаружили устройство
+		device := &Device{
+			PortID:      portID,
+			DeviceType:  dev.deviceType,
+			Name:        dev.name,
+			IsConnected: true,
+			LastUpdate:  time.Now(),
+			Properties:  make(map[string]interface{}),
+		}
+
+		hm.devices[portID] = device
+
+		if hm.deviceUpdateCallback != nil {
+			hm.deviceUpdateCallback(portID, device)
+		}
+
+		return // Нашли устройство, выходим
+	}
+
+	log.Printf("Порт %d: устройства не обнаружены", portID)
+}
+
+// detectBuiltInLED проверяет встроенный RGB светодиод на порту 6
+func (hm *HubManager) detectBuiltInLED() {
+	log.Println("Обнаружение встроенного RGB светодиода на порту 6...")
+
+	// Настраиваем светодиод в режиме RGB
+	setupCmd := []byte{0x01, 0x02, 6, 0x17, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+	err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
+	if err != nil {
+		log.Printf("Порт 6: ошибка настройки RGB режима - %v", err)
+		// Пробуем индексный режим
+		setupCmd = []byte{0x01, 0x02, 6, 0x17, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	// Включаем зеленый цвет
+	colorCmd := []byte{0x06, 0x04, 0x03, 0x00, 0xFF, 0x00}
+	err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, colorCmd)
+	if err != nil {
+		log.Printf("Порт 6: ошибка установки цвета - %v", err)
+		return
+	}
+
+	// Регистрируем устройство
+	device := &Device{
+		PortID:      6,
+		DeviceType:  DEVICE_TYPE_RGB_LIGHT,
+		Name:        "RGB светодиод",
+		IsConnected: true,
+		LastUpdate:  time.Now(),
+		Properties:  make(map[string]interface{}),
+	}
+
+	hm.devices[6] = device
+
+	log.Println("Порт 6: RGB светодиод обнаружен (зеленый)")
+
+	// Уведомляем GUI
+	if hm.deviceUpdateCallback != nil {
+		hm.deviceUpdateCallback(6, device)
+	}
+}
+
+// smartDetectPort умное обнаружение устройств на порту
+func (hm *HubManager) smartDetectPort(portID byte) {
+	log.Printf("Умное обнаружение на порту %d...", portID)
+
+	// Сначала запрашиваем информацию о порте
+	hm.requestPortInfoDirect()
+	time.Sleep(300 * time.Millisecond)
+
+	// Пробуем разные типы устройств в правильном порядке
+	deviceTypes := []struct {
+		name       string
+		deviceType byte
+		setupCmd   []byte
+		testCmd    []byte
+	}{
+		{
+			name:       "Датчик наклона",
+			deviceType: DEVICE_TYPE_TILT_SENSOR,
+			setupCmd:   []byte{0x01, 0x02, portID, 0x22, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01},
+			testCmd:    nil, // Датчики не требуют тестовой команды
+		},
+		{
+			name:       "Датчик расстояния",
+			deviceType: DEVICE_TYPE_MOTION_SENSOR,
+			setupCmd:   []byte{0x01, 0x02, portID, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01},
+			testCmd:    nil,
+		},
+		{
+			name:       "Мотор",
+			deviceType: DEVICE_TYPE_MOTOR,
+			setupCmd:   []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01},
+			testCmd:    []byte{portID, 0x01, 0x01, 0x10}, // Минимальная скорость вперед
+		},
+		{
+			name:       "Пищалка",
+			deviceType: DEVICE_TYPE_PIEZO_TONE,
+			setupCmd:   []byte{0x01, 0x02, portID, 0x16, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01},
+			testCmd:    []byte{portID, 0x02, 0x04, 0xB8, 0x01, 0xE8, 0x03}, // Тон 440 Гц, 1000 мс
+		},
+	}
+
+	for _, deviceType := range deviceTypes {
+		log.Printf("Порт %d: проверка на %s...", portID, deviceType.name)
+
+		// Настраиваем устройство
+		err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, deviceType.setupCmd)
+		if err != nil {
+			log.Printf("Порт %d: ошибка настройки %s - %v", portID, deviceType.name, err)
+			continue
+		}
+
+		time.Sleep(500 * time.Millisecond) // Даем время на настройку
+
+		// Для моторов и пищалок отправляем тестовую команду
+		if deviceType.testCmd != nil {
+			err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, deviceType.testCmd)
+			if err != nil {
+				log.Printf("Порт %d: ошибка теста %s - возможно, не %s", portID, deviceType.name, deviceType.name)
+
+				// Для мотора останавливаем, если был запущен
+				if deviceType.deviceType == DEVICE_TYPE_MOTOR {
+					hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, []byte{portID, 0x01, 0x01, 0x00})
+				}
+				continue
+			}
+
+			// Ждем и останавливаем тестовое действие
+			time.Sleep(300 * time.Millisecond)
+			if deviceType.deviceType == DEVICE_TYPE_MOTOR {
+				hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, []byte{portID, 0x01, 0x01, 0x00})
+			} else if deviceType.deviceType == DEVICE_TYPE_PIEZO_TONE {
+				hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, []byte{portID, 0x03, 0x00})
+			}
+		}
+
+		// Для датчиков проверяем ответ
+		if deviceType.deviceType == DEVICE_TYPE_TILT_SENSOR || deviceType.deviceType == DEVICE_TYPE_MOTION_SENSOR {
+			time.Sleep(300 * time.Millisecond)
+			data, err := hm.ReadCharacteristic(SENSOR_VALUES_UUID)
+			if err == nil && len(data) >= 4 && data[1] == portID {
+				log.Printf("Порт %d: %s отвечает, данные: %x", portID, deviceType.name, data)
+			} else {
+				log.Printf("Порт %d: %s не отвечает", portID, deviceType.name)
+				continue
+			}
+		}
+
+		// Успешно обнаружили устройство
+		log.Printf("Порт %d: обнаружен %s", portID, deviceType.name)
+
+		device := &Device{
+			PortID:      portID,
+			DeviceType:  deviceType.deviceType,
+			Name:        deviceType.name,
+			IsConnected: true,
+			LastUpdate:  time.Now(),
+			Properties:  make(map[string]interface{}),
+		}
+
+		hm.devices[portID] = device
+
+		// Уведомляем GUI
+		if hm.deviceUpdateCallback != nil {
+			hm.deviceUpdateCallback(portID, device)
+		}
+
+		break // Прерываем цикл, если нашли устройство
+	}
+}
+
+// requestPortInfoDirect запрашивает информацию о порте напрямую
+func (hm *HubManager) requestPortInfoDirect() {
+	// Отправляем команду запроса информации о портах
+	cmd := []byte{0x01, 0x00}
+	hm.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
 }
 
 // detectMotor пытается обнаружить мотор на порту
@@ -1250,5 +1290,149 @@ func (hm *HubManager) readRawSensorData(portID byte) {
 				hm.deviceUpdateCallback(portID, device)
 			}
 		}
+	}
+}
+
+// isPortExternal проверяет, является ли порт внешним
+func isPortExternal(portID byte) bool {
+	return portID == 1 || portID == 2 || portID == 6
+}
+
+// forceDetectMotor - принудительное обнаружение мотора на порту
+func (hm *HubManager) forceDetectMotor(portID byte) bool {
+	log.Printf("Принудительное обнаружение мотора на порту %d", portID)
+
+	// 1. Настройка мотора
+	setupCmd := []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+	err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
+	if err != nil {
+		log.Printf("Порт %d: ошибка настройки мотора - %v", portID, err)
+		return false
+	}
+
+	time.Sleep(3 * time.Second)
+
+	// 2. Запуск мотора на очень низкой скорости
+	runCmd := []byte{portID, 0x01, 0x01, 0x05} // Очень низкая скорость
+	err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, runCmd)
+	if err != nil {
+		log.Printf("Порт %d: ошибка запуска мотора - %v", portID, err)
+		return false
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// 3. Остановка мотора
+	stopCmd := []byte{portID, 0x01, 0x01, 0x00}
+	hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
+
+	// 4. Регистрация мотора
+	device := &Device{
+		PortID:      portID,
+		DeviceType:  DEVICE_TYPE_MOTOR,
+		Name:        "Мотор",
+		IsConnected: true,
+		LastUpdate:  time.Now(),
+		Properties:  make(map[string]interface{}),
+	}
+
+	hm.devices[portID] = device
+
+	if hm.deviceUpdateCallback != nil {
+		hm.deviceUpdateCallback(portID, device)
+	}
+
+	log.Printf("Порт %d: мотор обнаружен принудительно", portID)
+	return true
+}
+
+// parseWeDoPortMessageCorrect правильный парсинг сообщений WeDo 2.0
+func parseWeDoPortMessageCorrect(data []byte) (portID byte, isConnected bool, hubID byte, deviceType byte) {
+	if len(data) < 4 {
+		log.Printf("Сообщение слишком короткое: %x", data)
+		return 0, false, 0, 0
+	}
+
+	// Формат: [PortID, ConnectionEvent, HubID, DeviceType, ...]
+	portID = data[0]
+	connectionEvent := data[1]
+	hubID = data[2]
+	deviceType = data[3]
+
+	isConnected = (connectionEvent == 0x01)
+
+	log.Printf("Парсинг сообщения: порт=%d, подключено=%v, хаб=%d, тип=0x%02x",
+		portID, isConnected, hubID, deviceType)
+
+	return portID, isConnected, hubID, deviceType
+}
+
+// handlePortNotification обрабатывает уведомления о портах
+func (hm *HubManager) handlePortNotification(data []byte) {
+	portID, isConnected, hubID, deviceType := parseWeDoPortMessageCorrect(data)
+
+	if portID == 0 {
+		return // Не удалось распарсить
+	}
+
+	// Логируем все сообщения для отладки
+	log.Printf("Обработка порта: порт=%d, подключено=%v, хаб=%d, тип=0x%02x, данные=%x",
+		portID, isConnected, hubID, deviceType, data)
+
+	// Фильтруем порты
+	if !isExternalPort(portID) {
+		log.Printf("Игнорируем внутренний порт %d", portID)
+		return
+	}
+
+	if isConnected {
+		// Подключение устройства
+		if deviceType == 0x00 {
+			log.Printf("Порт %d: устройство подключено, но тип неизвестен (0x00)", portID)
+			return
+		}
+
+		// Преобразуем тип устройства
+		mappedDeviceType := hm.mapDeviceType(deviceType)
+		if mappedDeviceType == 0x00 {
+			log.Printf("Порт %d: неизвестный тип устройства 0x%02x", portID, deviceType)
+			return
+		}
+
+		log.Printf("Порт %d: подключено устройство типа 0x%02x (%s)",
+			portID, mappedDeviceType, hm.getDeviceName(mappedDeviceType))
+
+		hm.handleDeviceConnection(portID, mappedDeviceType, data)
+	} else {
+		// Отключение устройства
+		log.Printf("Порт %d: устройство отключено", portID)
+		hm.handleDeviceDisconnection(portID)
+	}
+}
+
+// isExternalPort проверяет, является ли порт внешним (1, 2, 6)
+func isExternalPort(portID byte) bool {
+	return portID == 1 || portID == 2 || portID == 6
+}
+
+// mapDeviceType преобразует WeDo 2.0 тип устройства в наш формат
+func (hm *HubManager) mapDeviceType(deviceType byte) byte {
+	switch deviceType {
+	case 0x01:
+		return DEVICE_TYPE_MOTOR
+	case 0x22:
+		return DEVICE_TYPE_TILT_SENSOR
+	case 0x23:
+		return DEVICE_TYPE_MOTION_SENSOR
+	case 0x17:
+		return DEVICE_TYPE_RGB_LIGHT
+	case 0x16:
+		return DEVICE_TYPE_PIEZO_TONE
+	case 0x14:
+		return DEVICE_TYPE_VOLTAGE
+	case 0x15:
+		return DEVICE_TYPE_CURRENT
+	default:
+		return 0x00 // Неизвестный тип
 	}
 }
