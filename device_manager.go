@@ -353,3 +353,56 @@ func (dm *DeviceManager) ForceDetectAllDevices() {
 	time.Sleep(3 * time.Second)
 	dm.SyncDevices()
 }
+
+// device_manager.go - добавляем функцию PlayToneAndWait
+func (dm *DeviceManager) PlayToneAndWait(portID byte, frequency uint16, duration uint16) error {
+	if !dm.hubMgr.IsConnected() {
+		return fmt.Errorf("не подключено к хабу")
+	}
+
+	// Проверяем, подключена ли пищалка
+	device, exists := dm.GetDevice(portID)
+	if !exists && dm.hubMgr != nil {
+		if hubDevice, hubExists := dm.hubMgr.GetDeviceFromPort(portID); hubExists {
+			device = hubDevice
+			exists = true
+			dm.AddOrUpdateDevice(device)
+		}
+	}
+
+	// Формируем команду
+	freqLow := byte(frequency & 0xFF)
+	freqHigh := byte((frequency >> 8) & 0xFF)
+	durLow := byte(duration & 0xFF)
+	durHigh := byte((duration >> 8) & 0xFF)
+
+	cmd := []byte{
+		portID,   // connectId
+		0x02,     // commandId
+		0x04,     // dataLength
+		freqLow,  // frequency low byte
+		freqHigh, // frequency high byte
+		durLow,   // duration low byte
+		durHigh,  // duration high byte
+	}
+
+	log.Printf("Проигрывание тона на порту %d: частота=%d Гц, длительность=%d мс", portID, frequency, duration)
+
+	err := dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", cmd)
+	if err != nil {
+		return err
+	}
+
+	// Ждем завершения звука СИНХРОННО
+	if duration > 0 {
+		log.Printf("Звук на порту %d воспроизводится %d мс...", portID, duration)
+		time.Sleep(time.Duration(duration) * time.Millisecond)
+
+		// Останавливаем звук (на всякий случай)
+		stopCmd := []byte{portID, 0x03, 0x00}
+		dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
+		log.Printf("Звук на порту %d завершен", portID)
+	}
+
+	return nil
+}

@@ -175,6 +175,7 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 		block.Parameters["duration"] = 1.0
 		block.OnExecute = func() error {
 			duration := block.Parameters["duration"].(float64)
+			log.Printf("Пауза: %.1f секунд", duration)
 			time.Sleep(time.Duration(duration*1000) * time.Millisecond)
 			return nil
 		}
@@ -245,7 +246,8 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			frequency := block.Parameters["frequency"].(uint16)
 			duration := block.Parameters["duration"].(uint16)
 
-			return pm.deviceMgr.PlayTone(port, frequency, duration)
+			// Используем функцию с ожиданием
+			return pm.deviceMgr.PlayToneAndWait(port, frequency, duration)
 		}
 
 	case BlockTypeVoltageSensor:
@@ -340,6 +342,8 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 	currentBlock := startBlock
 	executedBlocks := make(map[int]bool) // Для предотвращения бесконечных циклов
 
+	log.Println("=== Начало выполнения программы ===")
+
 	for pm.currentState == ProgramStateRunning && currentBlock != nil {
 		// Проверяем, не выполнялся ли уже этот блок (защита от бесконечных циклов)
 		if executedBlocks[currentBlock.ID] {
@@ -348,30 +352,32 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 		}
 		executedBlocks[currentBlock.ID] = true
 
-		log.Printf("Выполнение блока: %s (ID: %d)", currentBlock.Title, currentBlock.ID)
+		log.Printf(">>> Выполнение блока: %s (ID: %d) <<<", currentBlock.Title, currentBlock.ID)
 
 		// Выполняем блок
 		if currentBlock.OnExecute != nil {
+			startTime := time.Now()
+
 			if err := currentBlock.OnExecute(); err != nil {
-				log.Printf("Ошибка выполнения блока %d: %v", currentBlock.ID, err)
+				log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
 				pm.currentState = ProgramStateError
-				// Показываем сообщение об ошибке
-				// В реальном приложении нужно уведомить GUI
 				break
 			}
+
+			executionTime := time.Since(startTime)
+			log.Printf("Блок %d выполнен за %v", currentBlock.ID, executionTime)
 		} else {
 			log.Printf("Блок %d не имеет функции выполнения", currentBlock.ID)
-		}
-
-		// Ждем между блоками
-		if currentBlock.Type != BlockTypeWait {
-			// Для всех блоков кроме "Ждать" небольшая задержка
-			time.Sleep(50 * time.Millisecond)
 		}
 
 		// Ищем следующий блок
 		if currentBlock.NextBlockID > 0 {
 			nextBlock := pm.findBlockByID(currentBlock.NextBlockID)
+			if nextBlock == nil {
+				log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
+				pm.currentState = ProgramStateError
+				break
+			}
 			currentBlock = nextBlock
 		} else {
 			// Конец программы
@@ -383,17 +389,23 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 		if pm.currentState != ProgramStateRunning {
 			break
 		}
+
+		// Короткая пауза между блоками (кроме ожидания)
+		if currentBlock.Type != BlockTypeWait {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 
 	if pm.currentState == ProgramStateRunning {
 		pm.currentState = ProgramStateStopped
-		log.Println("Программа завершена успешно")
+		log.Println("=== Программа завершена успешно ===")
 	} else if pm.currentState == ProgramStateError {
-		log.Println("Программа завершена с ошибкой")
+		log.Println("=== Программа завершена с ошибкой ===")
 	}
 
 	// Гарантируем остановку всех моторов
 	pm.ensureAllMotorsStopped()
+	log.Println("Все моторы остановлены")
 }
 
 // ensureAllMotorsStopped гарантирует остановку всех моторов
