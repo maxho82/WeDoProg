@@ -545,16 +545,31 @@ func (hm *HubManager) handleDeviceConnection(portID byte, deviceType byte, data 
 func (hm *HubManager) handleDeviceDisconnection(portID byte) {
 	log.Printf("Устройство отключено от порта %d", portID)
 
-	// Создаем информацию об отключенном устройстве
-	device := &Device{
-		PortID:      portID,
-		IsConnected: false,
-		LastUpdate:  time.Now(),
-	}
+	// Проверяем, существует ли устройство
+	if device, exists := hm.devices[portID]; exists {
+		// Обновляем состояние устройства
+		device.IsConnected = false
+		device.LastUpdate = time.Now()
 
-	// Уведомляем об обновлении
-	if hm.deviceUpdateCallback != nil {
-		hm.deviceUpdateCallback(portID, device)
+		log.Printf("Устройство отключено: %s (порт %d)", device.Name, portID)
+
+		// Уведомляем GUI об изменении
+		if hm.deviceUpdateCallback != nil {
+			hm.deviceUpdateCallback(portID, device)
+		}
+	} else {
+		// Создаем информацию об отключенном устройстве
+		device := &Device{
+			PortID:      portID,
+			IsConnected: false,
+			LastUpdate:  time.Now(),
+			Properties:  make(map[string]interface{}),
+		}
+
+		// Уведомляем GUI
+		if hm.deviceUpdateCallback != nil {
+			hm.deviceUpdateCallback(portID, device)
+		}
 	}
 }
 
@@ -618,19 +633,29 @@ func (hm *HubManager) getDeviceName(deviceType byte) string {
 // WriteCharacteristic записывает данные в характеристику
 func (hm *HubManager) WriteCharacteristic(uuid string, data []byte) error {
 	hm.connectionMutex.RLock()
-	defer hm.connectionMutex.RUnlock()
 
 	if !hm.isConnected {
+		hm.connectionMutex.RUnlock()
 		return fmt.Errorf("не подключено к хабу")
 	}
 
 	char, exists := hm.characteristics[uuid]
 	if !exists {
+		hm.connectionMutex.RUnlock()
 		return fmt.Errorf("характеристика %s не найдена", uuid)
 	}
 
+	// Проверяем, не отключился ли хаб во время операции
+	if !hm.isConnected {
+		hm.connectionMutex.RUnlock()
+		return fmt.Errorf("потеряно подключение к хабу")
+	}
+
 	_, err := char.WriteWithoutResponse(data)
+	hm.connectionMutex.RUnlock()
+
 	if err != nil {
+		log.Printf("Ошибка отправки данных: %v", err)
 		return fmt.Errorf("ошибка отправки данных: %v", err)
 	}
 
@@ -1369,44 +1394,76 @@ func parseWeDoPortMessageCorrect(data []byte) (portID byte, isConnected bool, hu
 
 // handlePortNotification обрабатывает уведомления о портах
 func (hm *HubManager) handlePortNotification(data []byte) {
-	portID, isConnected, hubID, deviceType := parseWeDoPortMessageCorrect(data)
-
-	if portID == 0 {
-		return // Не удалось распарсить
-	}
-
-	// Логируем все сообщения для отладки
-	log.Printf("Обработка порта: порт=%d, подключено=%v, хаб=%d, тип=0x%02x, данные=%x",
-		portID, isConnected, hubID, deviceType, data)
-
-	// Фильтруем порты
-	if !isExternalPort(portID) {
-		log.Printf("Игнорируем внутренний порт %d", portID)
+	if len(data) < 2 {
+		log.Printf("Сообщение слишком короткое: %x", data)
 		return
 	}
 
-	if isConnected {
-		// Подключение устройства
-		if deviceType == 0x00 {
-			log.Printf("Порт %d: устройство подключено, но тип неизвестен (0x00)", portID)
+	// Логируем все сообщения для отладки
+	log.Printf("Обработка порта: данные=%x, длина=%d", data, len(data))
+
+	// Обрабатываем разные форматы сообщений
+	if len(data) == 2 {
+		// Формат: [PortID, 0x00] - отключение устройства (2 байта)
+		portID := data[0]
+		eventType := data[1]
+
+		if eventType == 0x00 {
+			log.Printf("Короткое сообщение об отключении: порт %d", portID)
+
+			// Фильтруем порты
+			if !isExternalPort(portID) {
+				log.Printf("Игнорируем внутренний порт %d", portID)
+				return
+			}
+
+			hm.handleDeviceDisconnection(portID)
+		} else {
+			log.Printf("Неизвестное короткое сообщение: порт=%d, событие=0x%02x", portID, eventType)
+		}
+	} else if len(data) >= 4 {
+		// Формат: [PortID, ConnectionEvent, HubID, DeviceType, ...] - подключение (>=4 байта)
+		portID := data[0]
+		connectionEvent := data[1]
+		hubID := data[2]
+		deviceType := data[3]
+
+		log.Printf("Длинное сообщение: порт=%d, событие=0x%02x, хаб=%d, тип=0x%02x",
+			portID, connectionEvent, hubID, deviceType)
+
+		// Фильтруем порты
+		if !isExternalPort(portID) {
+			log.Printf("Игнорируем внутренний порт %d", portID)
 			return
 		}
 
-		// Преобразуем тип устройства
-		mappedDeviceType := hm.mapDeviceType(deviceType)
-		if mappedDeviceType == 0x00 {
-			log.Printf("Порт %d: неизвестный тип устройства 0x%02x", portID, deviceType)
-			return
+		if connectionEvent == 0x01 {
+			// Подключение устройства
+			if deviceType == 0x00 {
+				log.Printf("Порт %d: устройство подключено, но тип неизвестен (0x00)", portID)
+				return
+			}
+
+			// Преобразуем тип устройства
+			mappedDeviceType := hm.mapDeviceType(deviceType)
+			if mappedDeviceType == 0x00 {
+				log.Printf("Порт %d: неизвестный тип устройства 0x%02x", portID, deviceType)
+				return
+			}
+
+			log.Printf("Порт %d: подключено устройство типа 0x%02x (%s)",
+				portID, mappedDeviceType, hm.getDeviceName(mappedDeviceType))
+
+			hm.handleDeviceConnection(portID, mappedDeviceType, data)
+		} else if connectionEvent == 0x00 {
+			// Отключение устройства (длинный формат)
+			log.Printf("Порт %d: устройство отключено (длинный формат)", portID)
+			hm.handleDeviceDisconnection(portID)
+		} else {
+			log.Printf("Порт %d: неизвестное событие 0x%02x", portID, connectionEvent)
 		}
-
-		log.Printf("Порт %d: подключено устройство типа 0x%02x (%s)",
-			portID, mappedDeviceType, hm.getDeviceName(mappedDeviceType))
-
-		hm.handleDeviceConnection(portID, mappedDeviceType, data)
 	} else {
-		// Отключение устройства
-		log.Printf("Порт %d: устройство отключено", portID)
-		hm.handleDeviceDisconnection(portID)
+		log.Printf("Неизвестный формат сообщения: %x", data)
 	}
 }
 

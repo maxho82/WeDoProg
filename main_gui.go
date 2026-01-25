@@ -39,7 +39,6 @@ type MainGUI struct {
 
 	// Динамические элементы
 	batteryProgress  *widget.ProgressBar
-	batteryLabel     *widget.Label
 	hubInfoContainer *fyne.Container
 	devicesContainer *fyne.Container
 
@@ -423,11 +422,9 @@ func (gui *MainGUI) updateConnectionStatus(isConnected bool) {
 // UpdateBatteryDisplay обновляет отображение батареи
 func (gui *MainGUI) UpdateBatteryDisplay(batteryLevel int) {
 	fyne.Do(func() {
-		if gui.batteryProgress != nil && gui.batteryLabel != nil {
+		if gui.batteryProgress != nil {
 			gui.batteryProgress.SetValue(float64(batteryLevel) / 100)
-			gui.batteryLabel.SetText(fmt.Sprintf("%d%%", batteryLevel))
 			gui.batteryProgress.Refresh()
-			gui.batteryLabel.Refresh()
 		}
 	})
 }
@@ -522,7 +519,7 @@ func (gui *MainGUI) createDevicePanel() *container.Scroll {
 	return container.NewVScroll(container.NewPadded(mainContainer))
 }
 
-// createBatteryWidget создает виджет батареи
+// createBatteryWidget создает виджет батареи (только прогресс-бар)
 func (gui *MainGUI) createBatteryWidget() *fyne.Container {
 	// Заголовок
 	title := canvas.NewText("Батарея", color.NRGBA{R: 240, G: 240, B: 240, A: 255})
@@ -535,14 +532,17 @@ func (gui *MainGUI) createBatteryWidget() *fyne.Container {
 	gui.batteryProgress.Max = 1
 	gui.batteryProgress.SetValue(0)
 
-	// Метка
-	gui.batteryLabel = widget.NewLabel("--%")
-	gui.batteryLabel.Alignment = fyne.TextAlignCenter
+	// Настраиваем отображение текста внутри прогресс-бара
+	gui.batteryProgress.TextFormatter = func() string {
+		if gui.batteryProgress.Value <= 0 {
+			return "--%"
+		}
+		return fmt.Sprintf("%.0f%%", gui.batteryProgress.Value*100)
+	}
 
 	return container.NewVBox(
 		container.NewCenter(title),
 		gui.batteryProgress,
-		gui.batteryLabel,
 	)
 }
 
@@ -683,11 +683,6 @@ func (gui *MainGUI) clearDeviceDisplay() {
 	if gui.batteryProgress != nil {
 		gui.batteryProgress.SetValue(0)
 		gui.batteryProgress.Refresh()
-	}
-
-	if gui.batteryLabel != nil {
-		gui.batteryLabel.SetText("--%")
-		gui.batteryLabel.Refresh()
 	}
 }
 

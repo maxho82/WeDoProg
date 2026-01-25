@@ -205,6 +205,18 @@ func (d *ProtocolTestDialog) showManualSendContent() {
 			resultLabel.Refresh()
 		}
 	})
+	/*
+		// Добавим в showManualSendContent кнопку для тестирования отключения
+		disconnectButton := widget.NewButton("Симулировать отключение", func() {
+			// Отправляем сообщение об отключении (2 байта)
+			// Формат: [PortID, 0x00]
+			for port := byte(1); port <= 2; port++ {
+				disconnectMsg := []byte{port, 0x00}
+				// Нужно отправить это сообщение через характеристику портов
+				// Но обычно хаб сам отправляет такие сообщения
+				log.Printf("Симуляция отключения устройства на порту %d", port)
+			}
+		}) */
 
 	d.container.Add(uuidLabel)
 	d.container.Add(uuidEntry)
