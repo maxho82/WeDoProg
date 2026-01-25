@@ -316,7 +316,13 @@ func (pm *ProgramManager) RunProgram() error {
 	}
 
 	if startBlock == nil {
-		return fmt.Errorf("стартовый блок не найден")
+		// Если нет блока "Начать", используем первый блок
+		if len(pm.program.Blocks) > 0 {
+			startBlock = pm.program.Blocks[0]
+			log.Println("Стартовый блок не найден, используем первый блок в программе")
+		} else {
+			return fmt.Errorf("нет блоков для выполнения")
+		}
 	}
 
 	pm.currentState = ProgramStateRunning
@@ -331,8 +337,16 @@ func (pm *ProgramManager) RunProgram() error {
 // executeProgram выполняет программу
 func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 	currentBlock := startBlock
+	executedBlocks := make(map[int]bool) // Для предотвращения бесконечных циклов
 
 	for pm.currentState == ProgramStateRunning && currentBlock != nil {
+		// Проверяем, не выполнялся ли уже этот блок (защита от бесконечных циклов)
+		if executedBlocks[currentBlock.ID] {
+			log.Printf("Предотвращение бесконечного цикла: блок %d уже выполнялся", currentBlock.ID)
+			break
+		}
+		executedBlocks[currentBlock.ID] = true
+
 		log.Printf("Выполнение блока: %s (ID: %d)", currentBlock.Title, currentBlock.ID)
 
 		// Выполняем блок
@@ -340,6 +354,7 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 			if err := currentBlock.OnExecute(); err != nil {
 				log.Printf("Ошибка выполнения блока %d: %v", currentBlock.ID, err)
 				pm.currentState = ProgramStateError
+				// Можно показать сообщение об ошибке
 				break
 			}
 		}
@@ -360,6 +375,8 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 	if pm.currentState == ProgramStateRunning {
 		pm.currentState = ProgramStateStopped
 		log.Println("Программа завершена успешно")
+	} else if pm.currentState == ProgramStateError {
+		log.Println("Программа завершена с ошибкой")
 	}
 }
 

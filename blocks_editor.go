@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -15,13 +17,15 @@ type BlockEditor struct {
 	deviceMgr *DeviceManager
 	container *fyne.Container
 	onChange  func(block *ProgramBlock)
+	window    fyne.Window // Добавляем поле для окна
 }
 
 // NewBlockEditor создает редактор свойств блока
-func NewBlockEditor(block *ProgramBlock, deviceMgr *DeviceManager, onChange func(block *ProgramBlock)) *BlockEditor {
+func NewBlockEditor(block *ProgramBlock, deviceMgr *DeviceManager, window fyne.Window, onChange func(block *ProgramBlock)) *BlockEditor {
 	editor := &BlockEditor{
 		block:     block,
 		deviceMgr: deviceMgr,
+		window:    window,
 		onChange:  onChange,
 	}
 
@@ -79,8 +83,8 @@ func (e *BlockEditor) buildUI() *fyne.Container {
 func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	// Выбор порта
 	portLabel := widget.NewLabel("Порт мотора:")
-	portSelect := widget.NewSelect([]string{"Порт 1", "Порт 2"}, func(selected string) {
-		if selected == "Порт 1" {
+	portSelect := widget.NewSelect([]string{"Порт 1 (Motor A)", "Порт 2 (Motor B)"}, func(selected string) {
+		if selected == "Порт 1 (Motor A)" {
 			e.block.Parameters["port"] = byte(1)
 		} else {
 			e.block.Parameters["port"] = byte(2)
@@ -91,17 +95,18 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	// Устанавливаем текущее значение
 	if port, ok := e.block.Parameters["port"].(byte); ok {
 		if port == 2 {
-			portSelect.SetSelected("Порт 2")
+			portSelect.SetSelected("Порт 2 (Motor B)")
 		} else {
-			portSelect.SetSelected("Порт 1")
+			portSelect.SetSelected("Порт 1 (Motor A)")
+			e.block.Parameters["port"] = byte(1)
 		}
 	} else {
-		portSelect.SetSelected("Порт 1")
+		portSelect.SetSelected("Порт 1 (Motor A)")
 		e.block.Parameters["port"] = byte(1)
 	}
 
 	// Мощность
-	powerLabel := widget.NewLabel("Мощность (-100% до 100%):")
+	powerLabelWidget := widget.NewLabel("Мощность (-100% до 100%):") // Переименовали переменную
 	powerSlider := widget.NewSlider(-100, 100)
 	powerValueLabel := widget.NewLabel("")
 
@@ -122,7 +127,7 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	}
 
 	// Длительность
-	durationLabel := widget.NewLabel("Длительность (мс):")
+	durationLabelWidget := widget.NewLabel("Длительность (мс):") // Переименовали переменную
 	durationEntry := widget.NewEntry()
 
 	// Устанавливаем текущее значение
@@ -142,19 +147,30 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 
 	// Кнопка теста
 	testButton := widget.NewButton("Тест", func() {
-		if e.deviceMgr != nil {
+		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
 			port := e.block.Parameters["port"].(byte)
 			power := e.block.Parameters["power"].(int8)
 			duration := e.block.Parameters["duration"].(uint16)
-			e.deviceMgr.SetMotorPower(port, power, duration)
+
+			err := e.deviceMgr.SetMotorPower(port, power, duration)
+			if err != nil {
+				log.Printf("Ошибка теста мотора: %v", err)
+				dialog.ShowError(fmt.Errorf("Ошибка теста мотора: %v", err), e.window)
+			} else {
+				dialog.ShowInformation("Тест мотора",
+					fmt.Sprintf("Мотор на порту %d запущен на мощности %d%%", port, power),
+					e.window)
+			}
+		} else {
+			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
 		}
 	})
 
 	cont.Add(portLabel)
 	cont.Add(portSelect)
-	cont.Add(powerLabel)
+	cont.Add(powerLabelWidget) // Используем переименованную переменную
 	cont.Add(container.NewHBox(powerSlider, powerValueLabel))
-	cont.Add(durationLabel)
+	cont.Add(durationLabelWidget) // Используем переименованную переменную
 	cont.Add(durationEntry)
 	cont.Add(testButton)
 }
@@ -171,10 +187,10 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 	e.block.Parameters["port"] = byte(6)
 
 	// Цвет
-	colorLabel := widget.NewLabel("Цвет (RGB):")
+	colorLabelWidget := widget.NewLabel("Цвет (RGB):")
 
 	// Красный
-	redLabel := widget.NewLabel("Красный:")
+	redLabelWidget := widget.NewLabel("Красный:")
 	redSlider := widget.NewSlider(0, 255)
 	redValueLabel := widget.NewLabel("")
 
@@ -194,7 +210,7 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 	}
 
 	// Зеленый
-	greenLabel := widget.NewLabel("Зеленый:")
+	greenLabelWidget := widget.NewLabel("Зеленый:")
 	greenSlider := widget.NewSlider(0, 255)
 	greenValueLabel := widget.NewLabel("")
 
@@ -214,7 +230,7 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 	}
 
 	// Синий
-	blueLabel := widget.NewLabel("Синий:")
+	blueLabelWidget := widget.NewLabel("Синий:")
 	blueSlider := widget.NewSlider(0, 255)
 	blueValueLabel := widget.NewLabel("")
 
@@ -234,8 +250,8 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 	}
 
 	// Быстрые цвета
-	quickColorsLabel := widget.NewLabel("Быстрые цвета:")
-	quickColors := container.NewGridWithColumns(4)
+	quickColorsLabelWidget := widget.NewLabel("Быстрые цвета:")
+	quickColorsContainer := container.NewGridWithColumns(4)
 
 	colors := []struct {
 		name    string
@@ -270,31 +286,42 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 		}(color.r, color.g, color.b))
 
 		btn.Importance = widget.LowImportance
-		quickColors.Add(btn)
+		quickColorsContainer.Add(btn)
 	}
 
 	// Кнопка теста
 	testButton := widget.NewButton("Тест", func() {
-		if e.deviceMgr != nil {
+		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
 			port := e.block.Parameters["port"].(byte)
 			red := e.block.Parameters["red"].(byte)
 			green := e.block.Parameters["green"].(byte)
 			blue := e.block.Parameters["blue"].(byte)
-			e.deviceMgr.SetLEDColor(port, red, green, blue)
+
+			err := e.deviceMgr.SetLEDColor(port, red, green, blue)
+			if err != nil {
+				log.Printf("Ошибка теста светодиода: %v", err)
+				dialog.ShowError(fmt.Errorf("Ошибка теста светодиода: %v", err), e.window)
+			} else {
+				dialog.ShowInformation("Тест светодиода",
+					fmt.Sprintf("Светодиод на порту %d установлен в RGB(%d,%d,%d)", port, red, green, blue),
+					e.window)
+			}
+		} else {
+			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
 		}
 	})
 
 	cont.Add(portLabel)
 	cont.Add(portSelect)
-	cont.Add(colorLabel)
-	cont.Add(redLabel)
+	cont.Add(colorLabelWidget)
+	cont.Add(redLabelWidget)
 	cont.Add(container.NewHBox(redSlider, redValueLabel))
-	cont.Add(greenLabel)
+	cont.Add(greenLabelWidget)
 	cont.Add(container.NewHBox(greenSlider, greenValueLabel))
-	cont.Add(blueLabel)
+	cont.Add(blueLabelWidget)
 	cont.Add(container.NewHBox(blueSlider, blueValueLabel))
-	cont.Add(quickColorsLabel)
-	cont.Add(quickColors)
+	cont.Add(quickColorsLabelWidget)
+	cont.Add(quickColorsContainer)
 	cont.Add(testButton)
 }
 
@@ -458,12 +485,34 @@ func (e *BlockEditor) addSoundControls(cont *fyne.Container) {
 		}
 	}
 
+	// Кнопка теста
+	testButton := widget.NewButton("Тест", func() {
+		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
+			port := e.block.Parameters["port"].(byte)
+			frequency := e.block.Parameters["frequency"].(uint16)
+			duration := e.block.Parameters["duration"].(uint16)
+
+			err := e.deviceMgr.PlayTone(port, frequency, duration)
+			if err != nil {
+				log.Printf("Ошибка теста звука: %v", err)
+				dialog.ShowError(fmt.Errorf("Ошибка теста звука: %v", err), e.window)
+			} else {
+				dialog.ShowInformation("Тест звука",
+					fmt.Sprintf("Звук на порту %d: частота %d Гц, длительность %d мс", port, frequency, duration),
+					e.window)
+			}
+		} else {
+			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
+		}
+	})
+
 	cont.Add(portLabel)
 	cont.Add(portSelect)
 	cont.Add(freqLabel)
 	cont.Add(freqEntry)
 	cont.Add(durationLabel)
 	cont.Add(durationEntry)
+	cont.Add(testButton)
 }
 
 // addSimpleSensorControls добавляет элементы управления для простых датчиков
@@ -485,8 +534,21 @@ func (e *BlockEditor) addSimpleSensorControls(cont *fyne.Container, sensorType B
 		e.block.Parameters["port"] = byte(1)
 	}
 
+	// Информация о типе датчика
+	var sensorName string
+	switch sensorType {
+	case BlockTypeVoltageSensor:
+		sensorName = "Датчик напряжения"
+	case BlockTypeCurrentSensor:
+		sensorName = "Датчик тока"
+	}
+
+	infoLabel := widget.NewLabel(fmt.Sprintf("%s измеряет значение на указанном порту", sensorName))
+	infoLabel.Wrapping = fyne.TextWrapWord
+
 	cont.Add(portLabel)
 	cont.Add(portSelect)
+	cont.Add(infoLabel)
 }
 
 // notifyChange уведомляет об изменении блока

@@ -5,6 +5,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -101,7 +102,17 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	// Кнопка очистки
 	clearButton := widget.NewButtonWithIcon("Очистить", theme.DeleteIcon(), func() {
 		if t.gui.programMgr != nil {
-			t.gui.programMgr.ClearProgram()
+			// Спрашиваем подтверждение
+			dialog.ShowConfirm("Очистить программу",
+				"Вы уверены, что хотите удалить все блоки программы?",
+				func(confirmed bool) {
+					if confirmed {
+						t.gui.programMgr.ClearProgram()
+						// Очищаем панель программирования
+						t.gui.programPanel.Clear()
+						log.Println("Программа очищена")
+					}
+				}, t.gui.window)
 		}
 	})
 	clearButton.Importance = widget.MediumImportance

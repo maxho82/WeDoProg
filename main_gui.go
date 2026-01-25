@@ -46,6 +46,7 @@ type MainGUI struct {
 	connectedHub     *HubInfo
 	connectedDevices map[byte]*Device
 	availableBlocks  map[BlockType]bool
+	selectedBlock    *ProgramBlock // Выбранный блок для удаления
 }
 
 // NewMainGUI создает новый GUI
@@ -87,35 +88,125 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	gui.devicePanel.SetMinSize(fyne.NewSize(250, 400))
 	gui.propertiesPanel.SetMinSize(fyne.NewSize(250, 400))
 
-	// НОВАЯ СТРУКТУРА:
-	// Слева: информация об устройстве (devicePanel)
-	// В центре: программа (programPanel) и блоки (blocksPanel) рядом
-	// Справа: свойства (propertiesPanel)
+	// Создаем разделители с правильными пропорциями
 
-	// Сначала создаем горизонтальный контейнер для blocksPanel и programPanel
-	programmingArea := container.NewHBox(
-		gui.blocksPanel,
-		gui.programPanel.GetContainer(),
+	// 1. Слева панель устройств и блоков
+	leftPanel := container.NewBorder(
+		nil,             // верх
+		nil,             // низ
+		gui.devicePanel, // лево
+		nil,             // право
+		gui.blocksPanel, // центр
 	)
 
-	// Создаем разделитель между devicePanel и programmingArea
-	leftSplit := container.NewHSplit(gui.devicePanel, programmingArea)
-	leftSplit.SetOffset(0.25) // devicePanel занимает 25%, programmingArea 75%
+	// 2. В центре панель программирования
+	// 3. Справа панель свойств
 
-	// Добавляем propertiesPanel справа
+	// Используем HBox с пропорциями
+	/* 	mainContent := container.NewHBox(
+		leftPanel,
+		gui.programPanel.GetContainer(),
+		gui.propertiesPanel,
+	) */
+
+	// Устанавливаем пропорции через layout.Spacer
+	// Переделываем на использование Split для правильного ресайза
+	leftSplit := container.NewHSplit(leftPanel, gui.programPanel.GetContainer())
+	leftSplit.SetOffset(0.3) // Левая часть (устройства + блоки) 30%
+
 	rightSplit := container.NewHSplit(leftSplit, gui.propertiesPanel)
-	rightSplit.SetOffset(0.75) // левая часть 75%, propertiesPanel 25%
+	rightSplit.SetOffset(0.7) // Программирование + левая часть 70%, свойства 30%
 
 	// Основной макет
-	mainContent := container.NewBorder(
+	mainContainer := container.NewBorder(
 		toolbar,    // Верх - панель инструментов
 		nil,        // Низ
 		nil,        // Лево
 		nil,        // Право
 		rightSplit, // Центр - основное содержимое
 	)
+	// Настраиваем обработку клавиатуры
+	gui.setupKeyboardShortcuts()
 
-	return mainContent
+	return mainContainer
+}
+
+// deleteSelectedBlock удаляет выбранный блок
+func (gui *MainGUI) deleteSelectedBlock() {
+	if gui.selectedBlock == nil {
+		return
+	}
+
+	// Спрашиваем подтверждение
+	dialog.ShowConfirm("Удалить блок",
+		fmt.Sprintf("Удалить блок '%s' (ID: %d)?", gui.selectedBlock.Title, gui.selectedBlock.ID),
+		func(confirmed bool) {
+			if confirmed {
+				// Удаляем блок из менеджера программ
+				gui.removeBlockFromProgram(gui.selectedBlock.ID)
+
+				// Удаляем блок с панели программирования
+				gui.programPanel.RemoveBlock(gui.selectedBlock.ID)
+
+				// Очищаем панель свойств
+				gui.clearPropertiesPanel()
+
+				// Сбрасываем выделение
+				gui.selectedBlock = nil
+
+				log.Printf("Блок %d удален", gui.selectedBlock.ID)
+			}
+		}, gui.window)
+}
+
+// removeBlockFromProgram удаляет блок из программы
+func (gui *MainGUI) removeBlockFromProgram(blockID int) {
+	// Находим и удаляем блок
+	var newBlocks []*ProgramBlock
+	for _, block := range gui.programMgr.program.Blocks {
+		if block.ID != blockID {
+			newBlocks = append(newBlocks, block)
+		}
+	}
+	gui.programMgr.program.Blocks = newBlocks
+
+	// Удаляем соединения с этим блоком
+	gui.removeConnectionsForBlock(blockID)
+
+	// Обновляем состояние кнопок
+	hasProgram := len(gui.programMgr.program.Blocks) > 0
+	gui.updateToolbarState(gui.hubMgr.IsConnected(), hasProgram)
+}
+
+// removeConnectionsForBlock удаляет соединения для блока
+func (gui *MainGUI) removeConnectionsForBlock(blockID int) {
+	var newConnections []*Connection
+	for _, conn := range gui.programMgr.program.Connections {
+		if conn.FromBlockID != blockID && conn.ToBlockID != blockID {
+			newConnections = append(newConnections, conn)
+		} else {
+			// Сбрасываем NextBlockID у блока, который ссылался на удаляемый
+			if conn.FromBlockID != blockID {
+				if block, exists := gui.programMgr.GetBlock(conn.FromBlockID); exists {
+					block.NextBlockID = 0
+				}
+			}
+		}
+	}
+	gui.programMgr.program.Connections = newConnections
+}
+
+// clearPropertiesPanel очищает панель свойств
+func (gui *MainGUI) clearPropertiesPanel() {
+	if gui.propertiesPanel != nil {
+		container, ok := gui.propertiesPanel.Content.(*fyne.Container)
+		if ok {
+			container.Objects = nil
+			container.Add(widget.NewLabel("Выберите элемент для просмотра свойств"))
+			container.Refresh()
+			gui.propertiesPanel.Refresh()
+		}
+	}
 }
 
 // createToolbar создает панель инструментов
@@ -294,6 +385,9 @@ func (gui *MainGUI) getBlockName(blockType BlockType) string {
 
 // showBlockProperties показывает свойства выбранного блока
 func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
+	// Сохраняем выбранный блок
+	gui.selectedBlock = block
+
 	// Очищаем панель свойств
 	if gui.propertiesPanel != nil {
 		container, ok := gui.propertiesPanel.Content.(*fyne.Container)
@@ -301,7 +395,7 @@ func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
 			container.Objects = nil
 
 			// Создаем редактор свойств блока
-			editor := NewBlockEditor(block, gui.deviceMgr, func(updatedBlock *ProgramBlock) {
+			editor := NewBlockEditor(block, gui.deviceMgr, gui.window, func(updatedBlock *ProgramBlock) {
 				// Сохраняем изменения в менеджере программ
 				gui.programMgr.UpdateBlock(updatedBlock.ID, updatedBlock.Parameters)
 				log.Printf("Параметры блока %d обновлены", updatedBlock.ID)

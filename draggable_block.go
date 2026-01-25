@@ -84,16 +84,14 @@ func (d *DraggableBlock) createContent() {
 		container.NewCenter(desc),
 	)
 
-	// Создаем коннекторы (точки соединения)
-	d.connectorTop = canvas.NewCircle(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
-	d.connectorTop.StrokeWidth = 1
-	d.connectorTop.StrokeColor = color.White
-	d.connectorTop.Resize(fyne.NewSize(10, 10))
+	// Создаем коннекторы (точки соединения) - делаем их невидимыми
+	d.connectorTop = canvas.NewCircle(color.Transparent)
+	d.connectorTop.StrokeWidth = 0
+	d.connectorTop.Resize(fyne.NewSize(1, 1))
 
-	d.connectorBottom = canvas.NewCircle(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
-	d.connectorBottom.StrokeWidth = 1
-	d.connectorBottom.StrokeColor = color.White
-	d.connectorBottom.Resize(fyne.NewSize(10, 10))
+	d.connectorBottom = canvas.NewCircle(color.Transparent)
+	d.connectorBottom.StrokeWidth = 0
+	d.connectorBottom.Resize(fyne.NewSize(1, 1))
 
 	// Контейнер для коннекторов
 	connectors := container.NewWithoutLayout(
@@ -130,6 +128,26 @@ func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
 		// Автоматически соединяем с предыдущим блоком, если он есть
 		d.autoConnectToPrevious()
 	}
+}
+
+// TappedSecondary обработка правого клика по блоку
+func (d *DraggableBlock) TappedSecondary(e *fyne.PointEvent) {
+	// Создаем контекстное меню
+	menu := fyne.NewMenu("",
+		fyne.NewMenuItem("Удалить", func() {
+			d.gui.deleteSelectedBlock()
+		}),
+		fyne.NewMenuItem("Копировать", func() {
+			// TODO: реализовать копирование
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Свойства", func() {
+			d.selectBlock()
+		}),
+	)
+
+	// Показываем контекстное меню
+	widget.ShowPopUpMenuAtPosition(menu, d.gui.window.Canvas(), e.AbsolutePosition)
 }
 
 // selectBlock выделяет этот блок и показывает его свойства
@@ -230,14 +248,14 @@ func (d *DraggableBlock) updateConnectorPositions() {
 	blockSize := d.Size()
 
 	// Верхний коннектор (центр верхней границы)
-	topX := blockPos.X + blockSize.Width/2 - 5
-	topY := blockPos.Y - 5
-	d.connectorTop.Move(fyne.NewPos(topX, topY))
+	topX := blockPos.X + blockSize.Width/2
+	topY := blockPos.Y
+	d.connectorTop.Move(fyne.NewPos(topX-0.5, topY-0.5))
 
 	// Нижний коннектор (центр нижней границы)
-	bottomX := blockPos.X + blockSize.Width/2 - 5
-	bottomY := blockPos.Y + blockSize.Height - 5
-	d.connectorBottom.Move(fyne.NewPos(bottomX, bottomY))
+	bottomX := blockPos.X + blockSize.Width/2
+	bottomY := blockPos.Y + blockSize.Height
+	d.connectorBottom.Move(fyne.NewPos(bottomX-0.5, bottomY-0.5))
 
 	d.connectorTop.Refresh()
 	d.connectorBottom.Refresh()

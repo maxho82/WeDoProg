@@ -317,3 +317,19 @@ func (p *ProgramPanel) GetBlockWidget(blockID int) *DraggableBlock {
 	}
 	return nil
 }
+
+// RecreateConnections перерисовывает все соединения
+func (p *ProgramPanel) RecreateConnections() {
+	// Удаляем все существующие соединения
+	for _, conn := range p.connections {
+		p.content.Remove(conn.line)
+	}
+	p.connections = make([]*ConnectionLine, 0)
+
+	// Создаем новые соединения
+	for _, conn := range p.programMgr.program.Connections {
+		p.createVisualConnection(conn.FromBlockID, conn.ToBlockID)
+	}
+
+	p.content.Refresh()
+}
