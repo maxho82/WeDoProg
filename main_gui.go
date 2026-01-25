@@ -137,16 +137,25 @@ func (gui *MainGUI) deleteSelectedBlock() {
 		return
 	}
 
+	// Сохраняем ID для лога перед удалением
+	blockID := gui.selectedBlock.ID
+	blockTitle := gui.selectedBlock.Title
+
 	// Спрашиваем подтверждение
 	dialog.ShowConfirm("Удалить блок",
-		fmt.Sprintf("Удалить блок '%s' (ID: %d)?", gui.selectedBlock.Title, gui.selectedBlock.ID),
+		fmt.Sprintf("Удалить блок '%s' (ID: %d)?", blockTitle, blockID),
 		func(confirmed bool) {
 			if confirmed {
+				log.Printf("Начинаем удаление блока %d", blockID)
+
 				// Удаляем блок из менеджера программ
-				gui.removeBlockFromProgram(gui.selectedBlock.ID)
+				success := gui.removeBlockFromProgram(blockID)
+				if !success {
+					log.Printf("Не удалось удалить блок %d из менеджера программ", blockID)
+				}
 
 				// Удаляем блок с панели программирования
-				gui.programPanel.RemoveBlock(gui.selectedBlock.ID)
+				gui.programPanel.RemoveBlock(blockID)
 
 				// Очищаем панель свойств
 				gui.clearPropertiesPanel()
@@ -154,21 +163,36 @@ func (gui *MainGUI) deleteSelectedBlock() {
 				// Сбрасываем выделение
 				gui.selectedBlock = nil
 
-				log.Printf("Блок %d удален", gui.selectedBlock.ID)
+				log.Printf("Блок %d удален", blockID)
+
+				// Обновляем соединения
+				gui.programPanel.RecreateConnections()
 			}
 		}, gui.window)
 }
 
 // removeBlockFromProgram удаляет блок из программы
-func (gui *MainGUI) removeBlockFromProgram(blockID int) {
+func (gui *MainGUI) removeBlockFromProgram(blockID int) bool {
+	log.Printf("Удаление блока %d из программы", blockID)
+
 	// Находим и удаляем блок
 	var newBlocks []*ProgramBlock
+	blockFound := false
 	for _, block := range gui.programMgr.program.Blocks {
 		if block.ID != blockID {
 			newBlocks = append(newBlocks, block)
+		} else {
+			blockFound = true
 		}
 	}
+
+	if !blockFound {
+		log.Printf("Блок %d не найден в программе", blockID)
+		return false
+	}
+
 	gui.programMgr.program.Blocks = newBlocks
+	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(newBlocks))
 
 	// Удаляем соединения с этим блоком
 	gui.removeConnectionsForBlock(blockID)
@@ -176,6 +200,8 @@ func (gui *MainGUI) removeBlockFromProgram(blockID int) {
 	// Обновляем состояние кнопок
 	hasProgram := len(gui.programMgr.program.Blocks) > 0
 	gui.updateToolbarState(gui.hubMgr.IsConnected(), hasProgram)
+
+	return true
 }
 
 // removeConnectionsForBlock удаляет соединения для блока

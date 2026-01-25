@@ -85,8 +85,21 @@ func (dm *DeviceManager) SetMotorPower(portID byte, power int8, duration uint16)
 
 	// Проверяем, подключен ли мотор
 	device, exists := dm.GetDevice(portID)
-	if !exists || !device.IsConnected || device.DeviceType != 0x01 {
-		return fmt.Errorf("мотор не подключен к порту %d", portID)
+	if !exists {
+		log.Printf("Устройство на порту %d не найдено в DeviceManager", portID)
+
+		// Попробуем получить устройство напрямую из HubManager
+		if device, exists := dm.hubMgr.GetDeviceFromPort(portID); exists && device.IsConnected {
+			log.Printf("Найдено устройство через HubManager: порт %d, тип %v", portID, device.DeviceType)
+		} else {
+			return fmt.Errorf("устройство на порту %d не найдено", portID)
+		}
+	} else if !device.IsConnected {
+		log.Printf("Устройство на порту %d существует, но не подключено", portID)
+		return fmt.Errorf("устройство на порту %d не подключено", portID)
+	} else if device.DeviceType != DEVICE_TYPE_MOTOR {
+		log.Printf("Устройство на порту %d имеет тип %v, ожидается мотор", portID, device.DeviceType)
+		return fmt.Errorf("устройство на порту %d не является мотором", portID)
 	}
 
 	// Преобразуем мощность в байт
@@ -103,7 +116,7 @@ func (dm *DeviceManager) SetMotorPower(portID byte, power int8, duration uint16)
 
 	cmd := []byte{portID, 0x01, 0x01, speedByte}
 
-	log.Printf("Установка мощности мотора на порту %d: %d%%", portID, power)
+	log.Printf("Установка мощности мотора на порту %d: %d%% (байт: 0x%02x)", portID, power, speedByte)
 	return dm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", cmd)
 }
 
