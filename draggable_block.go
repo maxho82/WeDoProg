@@ -21,6 +21,7 @@ type DraggableBlock struct {
 	content         fyne.CanvasObject
 	isDragging      bool
 	dragStart       fyne.Position
+	blockStartPos   fyne.Position // Новая переменная для хранения начальной позиции блока
 	isSelected      bool
 	connectorTop    *canvas.Circle
 	connectorBottom *canvas.Circle
@@ -207,20 +208,22 @@ func (d *DraggableBlock) autoConnectToPrevious() {
 	}
 }
 
-// Dragged обработка перетаскивания
+// Dragged обработка перетаскивания (для интерфейса fyne.Draggable)
 func (d *DraggableBlock) Dragged(e *fyne.DragEvent) {
 	if !d.isDragging {
 		d.isDragging = true
-		d.dragStart = d.Position()
+		d.dragStart = e.Position
+		d.blockStartPos = d.Position()
+		return
 	}
 
 	// Вычисляем новую позицию
 	newPos := fyne.NewPos(
-		d.dragStart.X+e.Dragged.DX,
-		d.dragStart.Y+e.Dragged.DY,
+		d.blockStartPos.X+e.Dragged.DX,
+		d.blockStartPos.Y+e.Dragged.DY,
 	)
 
-	// Ограничиваем движение в пределах положительных координат
+	// Ограничиваем минимальные координаты
 	if newPos.X < 0 {
 		newPos.X = 0
 	}
@@ -231,9 +234,10 @@ func (d *DraggableBlock) Dragged(e *fyne.DragEvent) {
 	// Перемещаем блок
 	d.Move(newPos)
 
-	// Обновляем позицию в данных блока
+	// Обновляем данные блока
 	d.block.X = float64(newPos.X)
 	d.block.Y = float64(newPos.Y)
+	d.block.DragStartPos = newPos
 
 	// Обновляем позиции коннекторов
 	d.updateConnectorPositions()
@@ -265,62 +269,70 @@ func (d *DraggableBlock) updateConnectorPositions() {
 func (d *DraggableBlock) DragEnd() {
 	if d.isDragging {
 		d.isDragging = false
-		log.Printf("Блок перемещен: %s -> (%.0f, %.0f)",
-			d.block.Title, d.block.X, d.block.Y)
 
 		// Обновляем позицию в менеджере программ
 		d.programMgr.UpdateBlockPosition(d.block.ID, d.block.X, d.block.Y)
+
+		log.Printf("Блок перемещен: %s -> (%.0f, %.0f)",
+			d.block.Title, d.block.X, d.block.Y)
 	}
 }
 
 // MouseDown обработка нажатия мыши
 func (d *DraggableBlock) MouseDown(e *desktop.MouseEvent) {
-	d.isDragging = true
-	d.dragStart = e.Position
+	if e.Button == desktop.LeftMouseButton {
+		d.isDragging = true
+		d.dragStart = e.AbsolutePosition
+		d.blockStartPos = d.Position() // Сохраняем текущую позицию блока
+		d.selectBlock()                // Выделяем блок при клике
+	}
 }
 
 // MouseUp обработка отпускания мыши
 func (d *DraggableBlock) MouseUp(e *desktop.MouseEvent) {
-	if d.isDragging {
+	if e.Button == desktop.LeftMouseButton && d.isDragging {
 		d.isDragging = false
 		d.DragEnd()
 	}
 }
 
-// MouseMoved обработка движения мыши
+// MouseMoved обработка движения мыши при перетаскивании
 func (d *DraggableBlock) MouseMoved(e *desktop.MouseEvent) {
-	if d.isDragging {
-		// Вычисляем смещение
-		deltaX := e.Position.X - d.dragStart.X
-		deltaY := e.Position.Y - d.dragStart.Y
-
-		// Новая позиция
-		newPos := fyne.NewPos(
-			d.block.DragStartPos.X+deltaX,
-			d.block.DragStartPos.Y+deltaY,
-		)
-
-		// Ограничиваем минимальные координаты
-		if newPos.X < 0 {
-			newPos.X = 0
-		}
-		if newPos.Y < 0 {
-			newPos.Y = 0
-		}
-
-		// Обновляем позицию
-		d.Move(newPos)
-
-		// Обновляем данные блока
-		d.block.X = float64(newPos.X)
-		d.block.Y = float64(newPos.Y)
-
-		// Обновляем позиции коннекторов
-		d.updateConnectorPositions()
-
-		// Обновляем соединения
-		d.gui.programPanel.updateConnections()
+	if !d.isDragging {
+		return
 	}
+
+	// Вычисляем смещение от начальной позиции мыши
+	deltaX := e.AbsolutePosition.X - d.dragStart.X
+	deltaY := e.AbsolutePosition.Y - d.dragStart.Y
+
+	// Новая позиция блока
+	newPos := fyne.NewPos(
+		d.blockStartPos.X+deltaX,
+		d.blockStartPos.Y+deltaY,
+	)
+
+	// Ограничиваем минимальные координаты
+	if newPos.X < 0 {
+		newPos.X = 0
+	}
+	if newPos.Y < 0 {
+		newPos.Y = 0
+	}
+
+	// Перемещаем блок
+	d.Move(newPos)
+
+	// Обновляем данные блока
+	d.block.X = float64(newPos.X)
+	d.block.Y = float64(newPos.Y)
+	d.block.DragStartPos = newPos
+
+	// Обновляем позиции коннекторов
+	d.updateConnectorPositions()
+
+	// Обновляем соединения
+	d.gui.programPanel.updateConnections()
 }
 
 // Cursor возвращает курсор для блока

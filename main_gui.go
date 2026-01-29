@@ -136,38 +136,41 @@ func (gui *MainGUI) deleteSelectedBlock() {
 		return
 	}
 
+	// Сохраняем ID для лога перед удалением
 	blockID := gui.selectedBlock.ID
 	blockTitle := gui.selectedBlock.Title
 
+	// Спрашиваем подтверждение
 	dialog.ShowConfirm("Удалить блок",
 		fmt.Sprintf("Удалить блок '%s' (ID: %d)?", blockTitle, blockID),
 		func(confirmed bool) {
 			if confirmed {
-				gui.BatchUpdate(
-					func() {
-						// 1. Удаляем блок из менеджера программ
-						gui.programMgr.RemoveBlock(blockID)
+				log.Printf("Начинаем удаление блока %d", blockID)
 
-						// 2. Удаляем блок с панели программирования
-						gui.programPanel.RemoveBlock(blockID)
+				// 1. Удаляем блок из менеджера программ
+				success := gui.programMgr.RemoveBlock(blockID)
+				if !success {
+					log.Printf("Не удалось удалить блок %d из менеджера программ", blockID)
+				}
 
-						// 3. Очищаем панель свойств
-						gui.clearPropertiesPanel()
+				// 2. Удаляем блок с панели программирования
+				gui.programPanel.RemoveBlock(blockID)
 
-						// 4. Сбрасываем выделение
-						gui.selectedBlock = nil
+				// 3. Репозиционируем все оставшиеся блоки
+				gui.programPanel.RepositionAllBlocks()
 
-						// 5. Обновляем состояние
-						hasProgram := len(gui.programMgr.program.Blocks) > 0
-						isConnected := gui.hubMgr != nil && gui.hubMgr.IsConnected()
-						gui.updateToolbarState(isConnected, hasProgram)
+				// 4. Очищаем панель свойств
+				gui.clearPropertiesPanel()
 
-						// 6. Обновляем соединения
-						gui.programPanel.UpdateAllConnections()
-					},
-				)
+				// 5. Сбрасываем выделение
+				gui.selectedBlock = nil
 
 				log.Printf("Блок %d удален", blockID)
+
+				// 6. Обновляем состояние кнопок
+				hasProgram := len(gui.programMgr.program.Blocks) > 0
+				isConnected := gui.hubMgr != nil && gui.hubMgr.IsConnected()
+				gui.updateToolbarState(isConnected, hasProgram)
 			}
 		}, gui.window)
 }

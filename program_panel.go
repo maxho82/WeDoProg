@@ -91,7 +91,7 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 		return
 	}
 
-	// Устанавливаем позицию блока
+	// Устанавливаем позицию блока - всегда начинаем с нового ряда
 	block.X = 100
 	block.Y = p.lastBlockY
 	block.DragStartPos = fyne.NewPos(float32(block.X), float32(block.Y))
@@ -102,16 +102,17 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 
 	p.content.Add(blockWidget)
 	p.blockWidgets[block.ID] = blockWidget // Сохраняем в кэш
+
+	// Обновляем lastBlockY ДО создания соединений
+	p.lastBlockY = block.Y + block.Height + 40 // Отступ для следующего блока
+
 	p.content.Refresh()
 
 	// Автоматически соединяем с предыдущим блоком
 	p.autoConnectBlock(block)
 
-	// Обновляем позицию для следующего блока
-	p.lastBlockY += block.Height + 40 // Отступ между блоками
-
-	log.Printf("Блок добавлен на холст: %s (ID: %d) на позиции (%.0f, %.0f)",
-		block.Title, block.ID, block.X, block.Y)
+	log.Printf("Блок добавлен на холст: %s (ID: %d) на позиции (%.0f, %.0f), следующий блок будет на Y=%.0f",
+		block.Title, block.ID, block.X, block.Y, p.lastBlockY)
 }
 
 // autoConnectBlock автоматически соединяет блок с предыдущим
@@ -215,11 +216,13 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 			}
 		}
 		delete(p.blockWidgets, blockID)
+
+		// Пересчитываем последнюю Y-координату для нового блока
+		p.recalculateLastBlockY()
 	}
 
 	// Удаляем связанные соединения
 	p.removeConnectionsForBlock(blockID)
-
 	p.content.Refresh()
 }
 
@@ -240,6 +243,24 @@ func (p *ProgramPanel) removeConnectionsForBlock(blockID int) {
 		}
 	}
 	p.connections = newConnections
+}
+
+// recalculateLastBlockY пересчитывает последнюю Y-координату на основе оставшихся блоков
+func (p *ProgramPanel) recalculateLastBlockY() {
+	if len(p.blockWidgets) == 0 {
+		p.lastBlockY = 50 // Возвращаемся к начальной позиции
+		return
+	}
+
+	// Находим самую нижнюю позицию среди всех блоков
+	maxY := 0.0
+	for _, widget := range p.blockWidgets {
+		if widget.block.Y+widget.block.Height > maxY {
+			maxY = widget.block.Y + widget.block.Height
+		}
+	}
+
+	p.lastBlockY = maxY + 40 // Отступ для нового блока
 }
 
 // AddConnection добавляет соединение между блоками
@@ -355,4 +376,43 @@ func (p *ProgramPanel) UpdateAllConnections() {
 	}
 
 	p.content.Refresh()
+}
+
+// RepositionAllBlocks перепозиционирует все блоки на холсте
+func (p *ProgramPanel) RepositionAllBlocks() {
+	// Сортируем блоки по ID для последовательного расположения
+	var blocks []*ProgramBlock
+	for _, block := range p.programMgr.program.Blocks {
+		blocks = append(blocks, block)
+	}
+
+	// Простая сортировка по ID
+	for i := 0; i < len(blocks)-1; i++ {
+		for j := i + 1; j < len(blocks); j++ {
+			if blocks[i].ID > blocks[j].ID {
+				blocks[i], blocks[j] = blocks[j], blocks[i]
+			}
+		}
+	}
+
+	// Перераспределяем блоки
+	currentY := 50.0
+	for _, block := range blocks {
+		block.X = 100
+		block.Y = currentY
+		block.DragStartPos = fyne.NewPos(float32(block.X), float32(block.Y))
+
+		// Обновляем позицию виджета
+		if widget, exists := p.blockWidgets[block.ID]; exists {
+			widget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
+		}
+
+		currentY += block.Height + 40
+	}
+
+	p.lastBlockY = currentY
+	p.content.Refresh()
+
+	// Обновляем соединения
+	p.UpdateAllConnections()
 }
