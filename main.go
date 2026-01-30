@@ -28,19 +28,6 @@ func main() {
 	// Создаем GUI
 	gui := NewMainGUI(window, hubMgr)
 
-	// Устанавливаем callback-функции для обновления GUI
-	// ДО того как что-либо делаем с хабом!
-	hubMgr.SetBatteryUpdateCallback(gui.UpdateBatteryDisplay)
-	hubMgr.SetHubInfoUpdateCallback(gui.UpdateHubInfoDisplay)
-	hubMgr.SetDeviceUpdateCallback(gui.UpdateDeviceDisplay)
-	hubMgr.SetConnectionStateCallback(gui.updateConnectionStatus)
-
-	// Инициализируем DeviceManager callback
-	gui.deviceMgr.SetDeviceChangedCallback(func(portID byte, device *Device) {
-		log.Printf("DeviceManager callback: порт %d, устройство: %s", portID, device.Name)
-		gui.UpdateDeviceDisplay(portID, device)
-	})
-
 	// Запускаем приложение
 	window.SetContent(gui.BuildUI())
 	window.ShowAndRun()

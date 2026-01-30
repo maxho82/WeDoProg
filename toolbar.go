@@ -34,7 +34,7 @@ func NewToolbar(gui *MainGUI) *Toolbar {
 
 // GetContainer возвращает контейнер панели инструментов
 func (t *Toolbar) GetContainer() fyne.CanvasObject {
-	return t.container // Это уже *fyne.Container, который реализует fyne.CanvasObject
+	return t.container
 }
 
 // UpdateState обновляет состояние кнопок панели инструментов
@@ -77,7 +77,7 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		}
 	})
 	disconnectButton.Importance = widget.MediumImportance
-	disconnectButton.Disable() // По умолчанию выключена
+	disconnectButton.Disable()
 
 	// Кнопки управления программой
 	t.runButton = widget.NewButtonWithIcon("Запуск", theme.MediaPlayIcon(), func() {
@@ -86,14 +86,14 @@ func (t *Toolbar) buildUI() *fyne.Container {
 			err := t.gui.programMgr.RunProgram()
 			if err != nil {
 				log.Printf("Ошибка запуска программы: %v", err)
-				// Можно показать сообщение об ошибке
+				dialog.ShowError(err, t.gui.window)
 			} else {
 				log.Println("Программа успешно запущена")
 			}
 		}
 	})
 	t.runButton.Importance = widget.HighImportance
-	t.runButton.Disable() // По умолчанию выключена
+	t.runButton.Disable()
 
 	t.stopButton = widget.NewButtonWithIcon("Стоп", theme.MediaStopIcon(), func() {
 		if t.gui != nil && t.gui.programMgr != nil {
@@ -102,14 +102,14 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		}
 	})
 	t.stopButton.Importance = widget.MediumImportance
-	t.stopButton.Disable() // По умолчанию выключена
+	t.stopButton.Disable()
 
 	// Кнопки работы с файлами
 	t.saveButton = widget.NewButtonWithIcon("Сохранить", theme.DocumentSaveIcon(), func() {
 		t.saveProgram()
 	})
 	t.saveButton.Importance = widget.MediumImportance
-	t.saveButton.Disable() // По умолчанию выключена
+	t.saveButton.Disable()
 
 	t.loadButton = widget.NewButtonWithIcon("Загрузить", theme.FolderOpenIcon(), func() {
 		t.loadProgram()
@@ -120,18 +120,16 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		t.exportProgram()
 	})
 	t.exportButton.Importance = widget.MediumImportance
-	t.exportButton.Disable() // По умолчанию выключена
+	t.exportButton.Disable()
 
 	// Кнопка очистки
 	clearButton := widget.NewButtonWithIcon("Очистить", theme.DeleteIcon(), func() {
 		if t.gui.programMgr != nil {
-			// Спрашиваем подтверждение
 			dialog.ShowConfirm("Очистить программу",
 				"Вы уверены, что хотите удалить все блоки программы?",
 				func(confirmed bool) {
 					if confirmed {
 						t.gui.programMgr.ClearProgram()
-						// Очищаем панель программирования
 						t.gui.programPanel.Clear()
 						log.Println("Программа очищена")
 					}
@@ -146,14 +144,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	})
 	helpButton.Importance = widget.LowImportance
 
-	// Кнопка тестирования протокола
-	testProtocolButton := widget.NewButtonWithIcon("Тест протокола", theme.VisibilityIcon(), func() {
-		if t.gui != nil {
-			t.gui.showProtocolTestDialog()
-		}
-	})
-	testProtocolButton.Importance = widget.LowImportance
-
 	// Статус подключения
 	if t.gui != nil {
 		t.gui.statusLabel = widget.NewLabel("Не подключено")
@@ -162,7 +152,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 
 		t.gui.connectButton = connectButton
 		t.gui.disconnectButton = disconnectButton
-		t.gui.testProtocolButton = testProtocolButton
 	}
 
 	// Контейнер панели инструментов
@@ -179,7 +168,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		widget.NewSeparator(),
 		clearButton,
 		widget.NewSeparator(),
-		testProtocolButton,
 		helpButton,
 		layout.NewSpacer(),
 	)
@@ -203,19 +191,43 @@ func (t *Toolbar) buildUI() *fyne.Container {
 // saveProgram сохраняет программу
 func (t *Toolbar) saveProgram() {
 	// TODO: Реализовать сохранение программы в файл
+	dialog.ShowInformation("Информация", "Функция сохранения программы в разработке", t.gui.window)
 }
 
 // loadProgram загружает программу
 func (t *Toolbar) loadProgram() {
 	// TODO: Реализовать загрузку программы из файла
+	dialog.ShowInformation("Информация", "Функция загрузки программы в разработке", t.gui.window)
 }
 
 // exportProgram экспортирует программу
 func (t *Toolbar) exportProgram() {
 	// TODO: Реализовать экспорт программы в разные форматы
+	dialog.ShowInformation("Информация", "Функция экспорта программы в разработке", t.gui.window)
 }
 
 // showHelp показывает справку
 func (t *Toolbar) showHelp() {
-	// TODO: Реализовать показ справки
+	helpText := `WeDoProg - Визуальный программист WeDo 2.0
+
+Основные функции:
+1. Подключение к WeDo 2.0 хабу через Bluetooth
+2. Визуальное программирование с помощью блоков
+3. Управление моторами, светодиодами и датчиками
+4. Сохранение и загрузка программ
+
+Использование:
+1. Нажмите "Поиск хаба" для подключения
+2. Перетаскивайте блоки из палитры на рабочую область
+3. Настраивайте параметры блоков в правой панели
+4. Используйте "Запуск" и "Стоп" для управления программой
+
+Поддерживаемые устройства:
+- Моторы
+- RGB светодиод
+- Датчик наклона
+- Датчик расстояния
+- Пищалка (зуммер)`
+
+	dialog.ShowInformation("Справка", helpText, t.gui.window)
 }

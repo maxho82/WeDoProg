@@ -51,8 +51,7 @@ func (msg *PortMessage) GetDeviceType() byte {
 		return 0x00
 	}
 
-	// Пытаемся определить тип по известным форматам LPF2
-	// Формат 1: [DeviceType, ...] - тип в первом байте
+	// Формат 1: [DeviceType, ...]
 	if len(msg.Data) >= 1 {
 		deviceType := msg.Data[0]
 		if isValidDeviceType(deviceType) {
@@ -60,7 +59,7 @@ func (msg *PortMessage) GetDeviceType() byte {
 		}
 	}
 
-	// Формат 2: [0x00, 0x00, DeviceType, ...] - тип в третьем байте
+	// Формат 2: [0x00, 0x00, DeviceType, ...]
 	if len(msg.Data) >= 3 && msg.Data[0] == 0x00 && msg.Data[1] == 0x00 {
 		deviceType := msg.Data[2]
 		if isValidDeviceType(deviceType) {
@@ -68,7 +67,7 @@ func (msg *PortMessage) GetDeviceType() byte {
 		}
 	}
 
-	// Формат 3: [0x01, 0x00, 0x00, DeviceType, ...] - тип в четвертом байте
+	// Формат 3: [0x01, 0x00, 0x00, DeviceType, ...]
 	if len(msg.Data) >= 4 && msg.Data[0] == 0x01 && msg.Data[1] == 0x00 && msg.Data[2] == 0x00 {
 		deviceType := msg.Data[3]
 		if isValidDeviceType(deviceType) {
@@ -101,7 +100,6 @@ func DecodeSensorValues(data []byte, portID byte) interface{} {
 		return nil
 	}
 
-	// Формат: [PortID, ValueType, Value...]
 	if data[1] != portID {
 		return nil
 	}

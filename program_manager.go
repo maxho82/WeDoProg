@@ -84,7 +84,7 @@ func NewProgramManager(hubMgr *HubManager, deviceMgr *DeviceManager) *ProgramMan
 	return &ProgramManager{
 		hubMgr:       hubMgr,
 		deviceMgr:    deviceMgr,
-		program:      &Program{Name: "Новая программа"},
+		program:      &Program{Name: "Новая программа", Created: time.Now(), Modified: time.Now()},
 		programs:     make(map[string]*Program),
 		currentState: ProgramStateStopped,
 	}
@@ -97,7 +97,7 @@ func (pm *ProgramManager) CreateBlock(blockType BlockType, x, y float64) *Progra
 		Type:         blockType,
 		X:            x,
 		Y:            y,
-		DragStartPos: fyne.NewPos(float32(x), float32(y)), // Инициализируем
+		DragStartPos: fyne.NewPos(float32(x), float32(y)),
 		Width:        150,
 		Height:       80,
 		Parameters:   make(map[string]interface{}),
@@ -120,7 +120,7 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeStart:
 		block.Title = "Начать"
 		block.Description = "Начало программы"
-		block.Color = "#4CAF50" // Зеленый
+		block.Color = "#4CAF50"
 		block.IsStart = true
 		block.OnExecute = func() error {
 			log.Println("Начало программы")
@@ -130,7 +130,7 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeMotor:
 		block.Title = "Мотор"
 		block.Description = "Управление мотором"
-		block.Color = "#2196F3" // Синий
+		block.Color = "#2196F3"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["power"] = int8(50)
 		block.Parameters["duration"] = uint16(1000)
@@ -138,19 +138,16 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
 			power := block.Parameters["power"].(int8)
 			duration := block.Parameters["duration"].(uint16)
-
-			// Используем функцию с ожиданием
 			return pm.deviceMgr.SetMotorPowerAndWait(port, power, duration)
 		}
 
 	case BlockTypeLED:
 		block.Title = "Светодиод"
 		block.Description = "Управление светодиодом"
-		block.Color = "#FF9800" // Оранжевый
+		block.Color = "#FF9800"
 		block.Parameters["port"] = byte(6)
 		block.Parameters["red"] = byte(255)
 		block.Parameters["green"] = byte(0)
@@ -159,19 +156,17 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
 			red := block.Parameters["red"].(byte)
 			green := block.Parameters["green"].(byte)
 			blue := block.Parameters["blue"].(byte)
-
 			return pm.deviceMgr.SetLEDColor(port, red, green, blue)
 		}
 
 	case BlockTypeWait:
 		block.Title = "Ждать"
 		block.Description = "Пауза в программе"
-		block.Color = "#9E9E9E" // Серый
+		block.Color = "#9E9E9E"
 		block.Parameters["duration"] = 1.0
 		block.OnExecute = func() error {
 			duration := block.Parameters["duration"].(float64)
@@ -183,30 +178,35 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeLoop:
 		block.Title = "Повторять"
 		block.Description = "Цикл повторений"
-		block.Color = "#9C27B0" // Фиолетовый
+		block.Color = "#9C27B0"
 		block.Parameters["count"] = 5
 		block.Parameters["forever"] = false
+		block.OnExecute = func() error {
+			log.Println("Цикл выполняется")
+			return nil
+		}
 
 	case BlockTypeCondition:
 		block.Title = "Условие"
 		block.Description = "Условный оператор"
-		block.Color = "#3F51B5" // Индиго
+		block.Color = "#3F51B5"
+		block.OnExecute = func() error {
+			log.Println("Проверка условия")
+			return nil
+		}
 
 	case BlockTypeTiltSensor:
 		block.Title = "Датчик наклона"
 		block.Description = "Чтение датчика наклона"
-		block.Color = "#673AB7" // Глубокий фиолетовый
+		block.Color = "#673AB7"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["mode"] = byte(1)
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
 			mode := block.Parameters["mode"].(byte)
-
-			// Настраиваем датчик
 			cmd := []byte{0x01, 0x02, port, 0x22, mode, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
 			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
 		}
@@ -214,18 +214,15 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeDistanceSensor:
 		block.Title = "Датчик расстояния"
 		block.Description = "Измерение расстояния"
-		block.Color = "#00BCD4" // Голубой
+		block.Color = "#00BCD4"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["mode"] = byte(0)
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
 			mode := block.Parameters["mode"].(byte)
-
-			// Настраиваем датчик
 			cmd := []byte{0x01, 0x02, port, 0x23, mode, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
 			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
 		}
@@ -233,7 +230,7 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeSound:
 		block.Title = "Звук"
 		block.Description = "Воспроизведение звука"
-		block.Color = "#FF5722" // Глубокий оранжевый
+		block.Color = "#FF5722"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["frequency"] = uint16(440)
 		block.Parameters["duration"] = uint16(1000)
@@ -241,28 +238,22 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
 			frequency := block.Parameters["frequency"].(uint16)
 			duration := block.Parameters["duration"].(uint16)
-
-			// Используем функцию с ожиданием
 			return pm.deviceMgr.PlayToneAndWait(port, frequency, duration)
 		}
 
 	case BlockTypeVoltageSensor:
 		block.Title = "Датчик напряжения"
 		block.Description = "Измерение напряжения"
-		block.Color = "#8BC34A" // Светло-зеленый
+		block.Color = "#8BC34A"
 		block.Parameters["port"] = byte(1)
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
-
-			// Настраиваем датчик
 			cmd := []byte{0x01, 0x02, port, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
 			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
 		}
@@ -270,16 +261,13 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeCurrentSensor:
 		block.Title = "Датчик тока"
 		block.Description = "Измерение тока"
-		block.Color = "#F44336" // Красный
+		block.Color = "#F44336"
 		block.Parameters["port"] = byte(1)
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
 			port := block.Parameters["port"].(byte)
-
-			// Настраиваем датчик
 			cmd := []byte{0x01, 0x02, port, 0x15, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
 			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
 		}
@@ -287,7 +275,7 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	case BlockTypeStop:
 		block.Title = "Стоп"
 		block.Description = "Остановка программы"
-		block.Color = "#F44336" // Красный
+		block.Color = "#F44336"
 		block.OnExecute = func() error {
 			pm.StopProgram()
 			return nil
@@ -319,7 +307,6 @@ func (pm *ProgramManager) RunProgram() error {
 	}
 
 	if startBlock == nil {
-		// Если нет блока "Начать", используем первый блок
 		if len(pm.program.Blocks) > 0 {
 			startBlock = pm.program.Blocks[0]
 			log.Println("Стартовый блок не найден, используем первый блок в программе")
@@ -340,12 +327,11 @@ func (pm *ProgramManager) RunProgram() error {
 // executeProgram выполняет программу
 func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 	currentBlock := startBlock
-	executedBlocks := make(map[int]bool) // Для предотвращения бесконечных циклов
+	executedBlocks := make(map[int]bool)
 
 	log.Println("=== Начало выполнения программы ===")
 
 	for pm.currentState == ProgramStateRunning && currentBlock != nil {
-		// Проверяем, не выполнялся ли уже этот блок (защита от бесконечных циклов)
 		if executedBlocks[currentBlock.ID] {
 			log.Printf("Предотвращение бесконечного цикла: блок %d уже выполнялся", currentBlock.ID)
 			break
@@ -380,30 +366,27 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 			}
 			currentBlock = nextBlock
 		} else {
-			// Конец программы
 			log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
 			break
 		}
 
-		// Дополнительная проверка на остановку
 		if pm.currentState != ProgramStateRunning {
 			break
 		}
 
-		// Короткая пауза между блоками (кроме ожидания)
 		if currentBlock.Type != BlockTypeWait {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
 
-	if pm.currentState == ProgramStateRunning {
+	switch pm.currentState {
+	case ProgramStateRunning:
 		pm.currentState = ProgramStateStopped
 		log.Println("=== Программа завершена успешно ===")
-	} else if pm.currentState == ProgramStateError {
+	case ProgramStateError:
 		log.Println("=== Программа завершена с ошибкой ===")
 	}
 
-	// Гарантируем остановку всех моторов
 	pm.ensureAllMotorsStopped()
 	log.Println("Все моторы остановлены")
 }
@@ -411,27 +394,20 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 // ensureAllMotorsStopped гарантирует остановку всех моторов
 func (pm *ProgramManager) ensureAllMotorsStopped() {
 	log.Println("Гарантированная остановка всех моторов...")
-
-	// Пытаемся остановить моторы на всех возможных портах
 	for port := byte(1); port <= 6; port++ {
 		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
-			// Прямая команда остановки
 			stopCmd := []byte{port, 0x01, 0x01, 0x00}
 			pm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
 		}
 	}
 }
 
-// В функции StopProgram также улучшим:
+// StopProgram останавливает программу
 func (pm *ProgramManager) StopProgram() {
 	if pm.currentState == ProgramStateRunning {
 		pm.currentState = ProgramStateStopped
 		log.Println("Программа остановлена")
-
-		// Останавливаем все моторы
 		pm.ensureAllMotorsStopped()
-
-		// Также останавливаем звуки
 		pm.stopAllSounds()
 	}
 }
@@ -439,10 +415,8 @@ func (pm *ProgramManager) StopProgram() {
 // stopAllSounds останавливает все звуки
 func (pm *ProgramManager) stopAllSounds() {
 	log.Println("Остановка всех звуков...")
-
 	for port := byte(1); port <= 6; port++ {
 		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
-			// Команда остановки звука
 			stopCmd := []byte{port, 0x03, 0x00}
 			pm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
 		}
@@ -465,7 +439,6 @@ func (pm *ProgramManager) ClearProgram() {
 	pm.program.Connections = make([]*Connection, 0)
 	pm.currentState = ProgramStateStopped
 	pm.program.Modified = time.Now()
-
 	log.Println("Программа очищена")
 }
 
@@ -500,7 +473,6 @@ func (pm *ProgramManager) UpdateBlock(blockID int, params map[string]interface{}
 
 // AddConnection добавляет соединение между блоками
 func (pm *ProgramManager) AddConnection(fromBlockID, toBlockID int) bool {
-	// Проверяем, существуют ли блоки
 	fromBlock, fromExists := pm.GetBlock(fromBlockID)
 	_, toExists := pm.GetBlock(toBlockID)
 
@@ -508,10 +480,8 @@ func (pm *ProgramManager) AddConnection(fromBlockID, toBlockID int) bool {
 		return false
 	}
 
-	// Устанавливаем следующий блок
 	fromBlock.NextBlockID = toBlockID
 
-	// Добавляем соединение
 	connection := &Connection{
 		FromBlockID: fromBlockID,
 		ToBlockID:   toBlockID,
@@ -524,9 +494,24 @@ func (pm *ProgramManager) AddConnection(fromBlockID, toBlockID int) bool {
 	return true
 }
 
+// RemoveConnection удаляет соединение
+func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
+	for i, conn := range pm.program.Connections {
+		if conn.FromBlockID == fromBlockID {
+			pm.program.Connections = append(pm.program.Connections[:i], pm.program.Connections[i+1:]...)
+			if block, exists := pm.GetBlock(fromBlockID); exists {
+				block.NextBlockID = 0
+			}
+			pm.program.Modified = time.Now()
+			log.Printf("Удалено соединение для блока %d", fromBlockID)
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveBlock полностью удаляет блок
 func (pm *ProgramManager) RemoveBlock(blockID int) bool {
-	// Находим блок
 	var blockToRemove *ProgramBlock
 	var newBlocks []*ProgramBlock
 
@@ -542,10 +527,9 @@ func (pm *ProgramManager) RemoveBlock(blockID int) bool {
 		return false
 	}
 
-	// Обновляем блоки
 	pm.program.Blocks = newBlocks
 
-	// Удаляем все соединения, связанные с этим блоком
+	// Удаляем все соединения, связанные с блоком
 	var newConnections []*Connection
 	for _, conn := range pm.program.Connections {
 		if conn.FromBlockID != blockID && conn.ToBlockID != blockID {
@@ -563,36 +547,14 @@ func (pm *ProgramManager) RemoveBlock(blockID int) bool {
 	}
 	pm.program.Connections = newConnections
 
-	// Если удаляемый блок был начальным, ищем новый начальный блок
+	// Если удаляемый блок был начальным, делаем первый блок начальным
 	if blockToRemove.IsStart && len(newBlocks) > 0 {
-		// Делаем первый блок начальным
 		newBlocks[0].IsStart = true
 	}
 
 	pm.program.Modified = time.Now()
-
 	log.Printf("Блок %d полностью удален из программы", blockID)
 	return true
-}
-
-// RemoveConnection удаляет соединение
-func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
-	for i, conn := range pm.program.Connections {
-		if conn.FromBlockID == fromBlockID {
-			// Удаляем соединение
-			pm.program.Connections = append(pm.program.Connections[:i], pm.program.Connections[i+1:]...)
-
-			// Сбрасываем следующий блок
-			if block, exists := pm.GetBlock(fromBlockID); exists {
-				block.NextBlockID = 0
-			}
-
-			pm.program.Modified = time.Now()
-			log.Printf("Удалено соединение для блока %d", fromBlockID)
-			return true
-		}
-	}
-	return false
 }
 
 // GetProgramState возвращает состояние программы

@@ -11,20 +11,23 @@ import (
 
 // ProgramPanel панель визуального программирования
 type ProgramPanel struct {
-	gui          *MainGUI
-	scroll       *container.Scroll
-	content      *fyne.Container
-	programMgr   *ProgramManager
-	connections  []*ConnectionLine
-	blockWidgets map[int]*DraggableBlock // Кэш виджетов блоков по ID
-	lastBlockY   float64
+	gui           *MainGUI
+	scroll        *container.Scroll
+	content       *fyne.Container
+	programMgr    *ProgramManager
+	connections   []*ConnectionLine
+	blockWidgets  map[int]*DraggableBlock
+	lastBlockY    float64
+	selectedBlock *ProgramBlock   // Выбранный блок для выделения
+	gridContainer *fyne.Container // Контейнер для сетки
 }
 
 // ConnectionLine линия соединения между блоками
 type ConnectionLine struct {
-	line        *canvas.Line
-	fromBlockID int
-	toBlockID   int
+	line          *canvas.Line
+	fromBlockID   int
+	toBlockID     int
+	isHighlighted bool
 }
 
 // NewProgramPanel создает панель программирования
@@ -33,16 +36,16 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 		gui:          gui,
 		programMgr:   programMgr,
 		connections:  make([]*ConnectionLine, 0),
-		blockWidgets: make(map[int]*DraggableBlock), // Инициализируем кэш
-		lastBlockY:   50,                            // Начальная Y-координата для первого блока
+		blockWidgets: make(map[int]*DraggableBlock),
+		lastBlockY:   50,
 	}
 
+	// Создаем основной контейнер с сеткой и блоками
 	panel.content = container.NewWithoutLayout()
+	panel.addGrid()
+
 	panel.scroll = container.NewScroll(panel.content)
 	panel.scroll.SetMinSize(fyne.NewSize(800, 600))
-
-	// Добавляем сетку
-	panel.addGrid()
 
 	return panel
 }
@@ -59,8 +62,8 @@ func (p *ProgramPanel) addGrid() {
 	bg.SetMinSize(fyne.NewSize(2000, 2000))
 	p.content.Add(bg)
 
-	// Линии сетки
-	gridLines := container.NewWithoutLayout()
+	// Контейнер для линий сетки
+	p.gridContainer = container.NewWithoutLayout()
 
 	// Вертикальные линии
 	for x := 0; x <= 2000; x += 20 {
@@ -68,7 +71,7 @@ func (p *ProgramPanel) addGrid() {
 		line.Position1 = fyne.NewPos(float32(x), 0)
 		line.Position2 = fyne.NewPos(float32(x), 2000)
 		line.StrokeWidth = 1
-		gridLines.Add(line)
+		p.gridContainer.Add(line)
 	}
 
 	// Горизонтальные линии
@@ -77,10 +80,10 @@ func (p *ProgramPanel) addGrid() {
 		line.Position1 = fyne.NewPos(0, float32(y))
 		line.Position2 = fyne.NewPos(2000, float32(y))
 		line.StrokeWidth = 1
-		gridLines.Add(line)
+		p.gridContainer.Add(line)
 	}
 
-	p.content.Add(gridLines)
+	p.content.Add(p.gridContainer)
 }
 
 // AddBlock добавляет блок на холст
@@ -91,41 +94,46 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 		return
 	}
 
-	// Устанавливаем позицию блока - всегда начинаем с нового ряда
+	// Устанавливаем позицию блока
 	block.X = 100
 	block.Y = p.lastBlockY
 	block.DragStartPos = fyne.NewPos(float32(block.X), float32(block.Y))
 
+	// Создаем виджет блока
 	blockWidget := NewDraggableBlock(block, p.programMgr, p.gui)
 	blockWidget.Resize(fyne.NewSize(float32(block.Width), float32(block.Height)))
 	blockWidget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
 
+	// Добавляем на панель (после сетки, чтобы блоки были сверху)
 	p.content.Add(blockWidget)
-	p.blockWidgets[block.ID] = blockWidget // Сохраняем в кэш
+	p.blockWidgets[block.ID] = blockWidget
 
-	// Обновляем lastBlockY ДО создания соединений
-	p.lastBlockY = block.Y + block.Height + 40 // Отступ для следующего блока
+	// Обновляем lastBlockY для следующего блока
+	p.lastBlockY = block.Y + block.Height + 40
 
 	p.content.Refresh()
 
 	// Автоматически соединяем с предыдущим блоком
 	p.autoConnectBlock(block)
 
-	log.Printf("Блок добавлен на холст: %s (ID: %d) на позиции (%.0f, %.0f), следующий блок будет на Y=%.0f",
-		block.Title, block.ID, block.X, block.Y, p.lastBlockY)
+	log.Printf("Блок добавлен на холст: %s (ID: %d) на позиции (%.0f, %.0f)",
+		block.Title, block.ID, block.X, block.Y)
 }
 
 // autoConnectBlock автоматически соединяет блок с предыдущим
 func (p *ProgramPanel) autoConnectBlock(newBlock *ProgramBlock) {
 	// Находим последний добавленный блок (кроме текущего)
 	var lastBlock *ProgramBlock
+	lastBlockID := 0
+
 	for _, block := range p.programMgr.program.Blocks {
-		if block.ID != newBlock.ID {
+		if block.ID != newBlock.ID && block.ID > lastBlockID {
+			lastBlockID = block.ID
 			lastBlock = block
 		}
 	}
 
-	if lastBlock != nil {
+	if lastBlock != nil && lastBlock.NextBlockID == 0 {
 		// Добавляем соединение в менеджер программ
 		p.programMgr.AddConnection(lastBlock.ID, newBlock.ID)
 
@@ -138,7 +146,7 @@ func (p *ProgramPanel) autoConnectBlock(newBlock *ProgramBlock) {
 
 // createVisualConnection создает визуальное соединение между блоками
 func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
-	// Получаем виджеты из кэша
+	// Получаем виджеты блоков
 	fromWidget, fromExists := p.blockWidgets[fromBlockID]
 	toWidget, toExists := p.blockWidgets[toBlockID]
 
@@ -151,48 +159,35 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 	fromPos := fromWidget.GetBottomConnectorPosition()
 	toPos := toWidget.GetTopConnectorPosition()
 
-	// Создаем линию соединения
+	// Создаем линию соединения (синяя по умолчанию)
 	line := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
 	line.Position1 = fromPos
 	line.Position2 = toPos
 	line.StrokeWidth = 2
 
+	// Добавляем линию на панель (после сетки, но до блоков)
 	p.content.Add(line)
 
 	// Сохраняем соединение
 	connection := &ConnectionLine{
-		line:        line,
-		fromBlockID: fromBlockID,
-		toBlockID:   toBlockID,
+		line:          line,
+		fromBlockID:   fromBlockID,
+		toBlockID:     toBlockID,
+		isHighlighted: false,
 	}
 
 	p.connections = append(p.connections, connection)
 	p.content.Refresh()
 }
 
-// addSimpleArrowHead добавляет простую стрелку на конце линии
-func (p *ProgramPanel) addSimpleArrowHead(line *canvas.Line, fromPos, toPos fyne.Position) {
-	// Простая реализация: просто делаем линию немного толще на конце
-	// В реальном приложении можно добавить настоящую стрелку
-	line.StrokeWidth = 2
-}
-
 // updateConnections обновляет все соединения
 func (p *ProgramPanel) updateConnections() {
 	for _, conn := range p.connections {
-		// Находим виджеты блоков
-		var fromWidget, toWidget *DraggableBlock
-		for _, obj := range p.content.Objects {
-			if block, ok := obj.(*DraggableBlock); ok {
-				if block.block.ID == conn.fromBlockID {
-					fromWidget = block
-				} else if block.block.ID == conn.toBlockID {
-					toWidget = block
-				}
-			}
-		}
+		// Получаем виджеты блоков
+		fromWidget, fromExists := p.blockWidgets[conn.fromBlockID]
+		toWidget, toExists := p.blockWidgets[conn.toBlockID]
 
-		if fromWidget != nil && toWidget != nil {
+		if fromExists && toExists {
 			// Обновляем позиции линии
 			fromPos := fromWidget.GetBottomConnectorPosition()
 			toPos := toWidget.GetTopConnectorPosition()
@@ -206,9 +201,8 @@ func (p *ProgramPanel) updateConnections() {
 
 // RemoveBlock удаляет блок с холста
 func (p *ProgramPanel) RemoveBlock(blockID int) {
-	// Удаляем из кэша
+	// Удаляем виджет блока из контейнера
 	if blockWidget, exists := p.blockWidgets[blockID]; exists {
-		// Удаляем из контейнера
 		for i, obj := range p.content.Objects {
 			if obj == blockWidget {
 				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
@@ -216,13 +210,14 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 			}
 		}
 		delete(p.blockWidgets, blockID)
-
-		// Пересчитываем последнюю Y-координату для нового блока
-		p.recalculateLastBlockY()
 	}
 
 	// Удаляем связанные соединения
 	p.removeConnectionsForBlock(blockID)
+
+	// Пересчитываем позиции оставшихся блоков
+	p.repositionRemainingBlocks()
+
 	p.content.Refresh()
 }
 
@@ -245,174 +240,96 @@ func (p *ProgramPanel) removeConnectionsForBlock(blockID int) {
 	p.connections = newConnections
 }
 
-// recalculateLastBlockY пересчитывает последнюю Y-координату на основе оставшихся блоков
-func (p *ProgramPanel) recalculateLastBlockY() {
-	if len(p.blockWidgets) == 0 {
-		p.lastBlockY = 50 // Возвращаемся к начальной позиции
-		return
+// repositionRemainingBlocks перепозиционирует оставшиеся блоки
+func (p *ProgramPanel) repositionRemainingBlocks() {
+	// Сортируем блоки по ID
+	var blockIDs []int
+	for id := range p.blockWidgets {
+		blockIDs = append(blockIDs, id)
 	}
 
-	// Находим самую нижнюю позицию среди всех блоков
-	maxY := 0.0
-	for _, widget := range p.blockWidgets {
-		if widget.block.Y+widget.block.Height > maxY {
-			maxY = widget.block.Y + widget.block.Height
+	// Простая сортировка
+	for i := 0; i < len(blockIDs)-1; i++ {
+		for j := i + 1; j < len(blockIDs); j++ {
+			if blockIDs[i] > blockIDs[j] {
+				blockIDs[i], blockIDs[j] = blockIDs[j], blockIDs[i]
+			}
 		}
 	}
 
-	p.lastBlockY = maxY + 40 // Отступ для нового блока
-}
-
-// AddConnection добавляет соединение между блоками
-func (p *ProgramPanel) AddConnection(fromBlockID, toBlockID int, fromPos, toPos fyne.Position) {
-	line := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
-	line.Position1 = fromPos
-	line.Position2 = toPos
-	line.StrokeWidth = 2
-
-	p.content.Add(line)
-
-	connection := &ConnectionLine{
-		line:        line,
-		fromBlockID: fromBlockID,
-		toBlockID:   toBlockID,
+	// Располагаем блоки по порядку
+	currentY := 50.0
+	for _, blockID := range blockIDs {
+		if widget, exists := p.blockWidgets[blockID]; exists {
+			widget.block.Y = currentY
+			widget.block.X = 100
+			widget.Move(fyne.NewPos(100, float32(currentY)))
+			currentY += widget.block.Height + 40
+		}
 	}
 
-	p.connections = append(p.connections, connection)
-	p.content.Refresh()
+	p.lastBlockY = currentY
+
+	// Обновляем соединения
+	p.updateConnections()
 }
 
 // Clear очищает холст
 func (p *ProgramPanel) Clear() {
 	// Оставляем только фон и сетку
 	var newObjects []fyne.CanvasObject
-	for _, obj := range p.content.Objects {
-		if _, ok := obj.(*canvas.Rectangle); ok {
-			// Это фон
-			newObjects = append(newObjects, obj)
-		} else if container, ok := obj.(*fyne.Container); ok && len(container.Objects) > 0 {
-			// Это сетка
-			newObjects = append(newObjects, obj)
-		}
-	}
+	newObjects = append(newObjects, p.content.Objects[0]) // Фон
+	newObjects = append(newObjects, p.content.Objects[1]) // Сетка
 
 	p.content.Objects = newObjects
 	p.connections = make([]*ConnectionLine, 0)
-	p.blockWidgets = make(map[int]*DraggableBlock) // Очищаем кэш
+	p.blockWidgets = make(map[int]*DraggableBlock)
 	p.lastBlockY = 50
 	p.content.Refresh()
 }
 
-// UpdateConnectionPositions обновляет позиции соединений
-func (p *ProgramPanel) UpdateConnectionPositions() {
+// HighlightConnections выделяет соединения блока
+func (p *ProgramPanel) HighlightConnections(blockID int) {
+	// Сбрасываем выделение всех линий
 	for _, conn := range p.connections {
-		conn.line.Refresh()
+		conn.isHighlighted = false
+		conn.line.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255} // Синий
+		conn.line.StrokeWidth = 2
 	}
-}
 
-// GetBlockAtPosition возвращает блок в указанной позиции
-func (p *ProgramPanel) GetBlockAtPosition(pos fyne.Position) *ProgramBlock {
-	for _, obj := range p.content.Objects {
-		if block, ok := obj.(*DraggableBlock); ok {
-			blockPos := block.Position()
-			blockSize := block.Size()
-
-			if pos.X >= blockPos.X && pos.X <= blockPos.X+blockSize.Width &&
-				pos.Y >= blockPos.Y && pos.Y <= blockPos.Y+blockSize.Height {
-				return block.block
-			}
+	// Выделяем линии, связанные с блоком
+	for _, conn := range p.connections {
+		if conn.fromBlockID == blockID || conn.toBlockID == blockID {
+			conn.isHighlighted = true
+			conn.line.StrokeColor = color.NRGBA{R: 255, G: 215, B: 0, A: 255} // Золотой
+			conn.line.StrokeWidth = 3
 		}
 	}
-	return nil
+
+	p.content.Refresh()
 }
 
-// ShowProperties показывает свойства выбранного блока
-func (p *ProgramPanel) ShowProperties(block *ProgramBlock) {
-	p.gui.showBlockProperties(block)
+// ResetHighlight сбрасывает выделение всех соединений
+func (p *ProgramPanel) ResetHighlight() {
+	for _, conn := range p.connections {
+		conn.isHighlighted = false
+		conn.line.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255}
+		conn.line.StrokeWidth = 2
+	}
+	p.content.Refresh()
 }
 
 // GetBlockWidget возвращает виджет блока по ID
 func (p *ProgramPanel) GetBlockWidget(blockID int) *DraggableBlock {
-	for _, obj := range p.content.Objects {
-		if block, ok := obj.(*DraggableBlock); ok && block.block.ID == blockID {
-			return block
-		}
-	}
-	return nil
+	return p.blockWidgets[blockID]
 }
 
-// RecreateConnections перерисовывает все соединения
-func (p *ProgramPanel) RecreateConnections() {
-	// Удаляем все существующие соединения
-	for _, conn := range p.connections {
-		p.content.Remove(conn.line)
+// SetSelectedBlock устанавливает выбранный блок
+func (p *ProgramPanel) SetSelectedBlock(block *ProgramBlock) {
+	p.selectedBlock = block
+	if block != nil {
+		p.HighlightConnections(block.ID)
+	} else {
+		p.ResetHighlight()
 	}
-	p.connections = make([]*ConnectionLine, 0)
-
-	// Создаем новые соединения
-	for _, conn := range p.programMgr.program.Connections {
-		p.createVisualConnection(conn.FromBlockID, conn.ToBlockID)
-	}
-
-	p.content.Refresh()
-}
-
-// UpdateAllConnections полностью обновляет все соединения
-func (p *ProgramPanel) UpdateAllConnections() {
-	// Удаляем все существующие визуальные соединения
-	for _, conn := range p.connections {
-		for i, obj := range p.content.Objects {
-			if obj == conn.line {
-				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
-				break
-			}
-		}
-	}
-	p.connections = make([]*ConnectionLine, 0)
-
-	// Создаем новые соединения на основе данных из менеджера программ
-	for _, conn := range p.programMgr.program.Connections {
-		p.createVisualConnection(conn.FromBlockID, conn.ToBlockID)
-	}
-
-	p.content.Refresh()
-}
-
-// RepositionAllBlocks перепозиционирует все блоки на холсте
-func (p *ProgramPanel) RepositionAllBlocks() {
-	// Сортируем блоки по ID для последовательного расположения
-	var blocks []*ProgramBlock
-	for _, block := range p.programMgr.program.Blocks {
-		blocks = append(blocks, block)
-	}
-
-	// Простая сортировка по ID
-	for i := 0; i < len(blocks)-1; i++ {
-		for j := i + 1; j < len(blocks); j++ {
-			if blocks[i].ID > blocks[j].ID {
-				blocks[i], blocks[j] = blocks[j], blocks[i]
-			}
-		}
-	}
-
-	// Перераспределяем блоки
-	currentY := 50.0
-	for _, block := range blocks {
-		block.X = 100
-		block.Y = currentY
-		block.DragStartPos = fyne.NewPos(float32(block.X), float32(block.Y))
-
-		// Обновляем позицию виджета
-		if widget, exists := p.blockWidgets[block.ID]; exists {
-			widget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
-		}
-
-		currentY += block.Height + 40
-	}
-
-	p.lastBlockY = currentY
-	p.content.Refresh()
-
-	// Обновляем соединения
-	p.UpdateAllConnections()
 }
