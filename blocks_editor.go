@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -17,7 +18,7 @@ type BlockEditor struct {
 	deviceMgr *DeviceManager
 	container *fyne.Container
 	onChange  func(block *ProgramBlock)
-	window    fyne.Window // Добавляем поле для окна
+	window    fyne.Window
 }
 
 // NewBlockEditor создает редактор свойств блока
@@ -126,6 +127,10 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
+	// Контейнер для ползунка мощности
+	powerContainer := container.NewBorder(nil, nil, nil, powerValueLabel, powerSlider)
+	powerContainer.SetMinSize(fyne.NewSize(250, 40)) // Минимальная ширина для ползунка
+
 	// Длительность
 	durationLabelWidget := widget.NewLabel("Длительность (мс, 0 = бесконечно):")
 	durationEntry := widget.NewEntry()
@@ -148,7 +153,7 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	}
 
 	// Кнопка теста
-	testButton := widget.NewButton("Тест", func() {
+	testButton := widget.NewButton("Тест мотор", func() {
 		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
 			port := e.block.Parameters["port"].(byte)
 			power := e.block.Parameters["power"].(int8)
@@ -173,14 +178,17 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
 		}
 	})
+	testButton.Importance = widget.HighImportance
 
+	// Добавляем все элементы в контейнер
 	cont.Add(portLabel)
 	cont.Add(portSelect)
 	cont.Add(powerLabelWidget)
-	cont.Add(container.NewHBox(powerSlider, powerValueLabel))
+	cont.Add(powerContainer)
 	cont.Add(durationLabelWidget)
 	cont.Add(durationEntry)
-	cont.Add(testButton)
+	cont.Add(layout.NewSpacer())
+	cont.Add(container.NewCenter(testButton))
 }
 
 // addLEDControls добавляет элементы управления для светодиода
@@ -217,6 +225,9 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
+	// Контейнер для ползунка красного
+	redContainer := container.NewBorder(nil, nil, nil, redValueLabel, redSlider)
+
 	// Зеленый
 	greenLabelWidget := widget.NewLabel("Зеленый:")
 	greenSlider := widget.NewSlider(0, 255)
@@ -236,6 +247,9 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 		greenValueLabel.SetText(fmt.Sprintf("%.0f", value))
 		e.notifyChange()
 	}
+
+	// Контейнер для ползунка зеленого
+	greenContainer := container.NewBorder(nil, nil, nil, greenValueLabel, greenSlider)
 
 	// Синий
 	blueLabelWidget := widget.NewLabel("Синий:")
@@ -257,9 +271,12 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
+	// Контейнер для ползунка синего
+	blueContainer := container.NewBorder(nil, nil, nil, blueValueLabel, blueSlider)
+
 	// Быстрые цвета
 	quickColorsLabelWidget := widget.NewLabel("Быстрые цвета:")
-	quickColorsContainer := container.NewGridWithColumns(4)
+	quickColorsContainer := container.NewGridWithColumns(3)
 
 	colors := []struct {
 		name    string
@@ -298,7 +315,7 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 	}
 
 	// Кнопка теста
-	testButton := widget.NewButton("Тест", func() {
+	testButton := widget.NewButton("Тест светодиод", func() {
 		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
 			port := e.block.Parameters["port"].(byte)
 			red := e.block.Parameters["red"].(byte)
@@ -318,42 +335,50 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
 		}
 	})
+	testButton.Importance = widget.HighImportance
 
 	cont.Add(portLabel)
 	cont.Add(portSelect)
 	cont.Add(colorLabelWidget)
 	cont.Add(redLabelWidget)
-	cont.Add(container.NewHBox(redSlider, redValueLabel))
+	cont.Add(redContainer)
 	cont.Add(greenLabelWidget)
-	cont.Add(container.NewHBox(greenSlider, greenValueLabel))
+	cont.Add(greenContainer)
 	cont.Add(blueLabelWidget)
-	cont.Add(container.NewHBox(blueSlider, blueValueLabel))
+	cont.Add(blueContainer)
 	cont.Add(quickColorsLabelWidget)
 	cont.Add(quickColorsContainer)
-	cont.Add(testButton)
+	cont.Add(layout.NewSpacer())
+	cont.Add(container.NewCenter(testButton))
 }
 
 // addWaitControls добавляет элементы управления для блока ожидания
 func (e *BlockEditor) addWaitControls(cont *fyne.Container) {
 	durationLabel := widget.NewLabel("Длительность ожидания (секунды):")
-	durationEntry := widget.NewEntry()
+	durationSlider := widget.NewSlider(0.1, 10.0)
+	durationSlider.Step = 0.1
+	durationValueLabel := widget.NewLabel("")
 
 	if duration, ok := e.block.Parameters["duration"].(float64); ok {
-		durationEntry.SetText(fmt.Sprintf("%.1f", duration))
+		durationSlider.Value = duration
+		durationValueLabel.SetText(fmt.Sprintf("%.1f с", duration))
 	} else {
-		durationEntry.SetText("1.0")
+		durationSlider.Value = 1.0
 		e.block.Parameters["duration"] = 1.0
+		durationValueLabel.SetText("1.0 с")
 	}
 
-	durationEntry.OnChanged = func(text string) {
-		if dur, err := strconv.ParseFloat(text, 64); err == nil {
-			e.block.Parameters["duration"] = dur
-			e.notifyChange()
-		}
+	durationSlider.OnChanged = func(value float64) {
+		e.block.Parameters["duration"] = value
+		durationValueLabel.SetText(fmt.Sprintf("%.1f с", value))
+		e.notifyChange()
 	}
+
+	// Контейнер для ползунка
+	durationContainer := container.NewBorder(nil, nil, nil, durationValueLabel, durationSlider)
 
 	cont.Add(durationLabel)
-	cont.Add(durationEntry)
+	cont.Add(durationContainer)
 }
 
 // addLoopControls добавляет элементы управления для цикла
@@ -372,26 +397,32 @@ func (e *BlockEditor) addLoopControls(cont *fyne.Container) {
 	}
 
 	countLabel := widget.NewLabel("Количество повторений:")
-	countEntry := widget.NewEntry()
+	countSlider := widget.NewSlider(1, 100)
+	countSlider.Step = 1
+	countValueLabel := widget.NewLabel("")
 
 	if count, ok := e.block.Parameters["count"].(int); ok {
-		countEntry.SetText(fmt.Sprintf("%d", count))
+		countSlider.Value = float64(count)
+		countValueLabel.SetText(fmt.Sprintf("%d раз", count))
 	} else {
-		countEntry.SetText("5")
+		countSlider.Value = 5
 		e.block.Parameters["count"] = 5
+		countValueLabel.SetText("5 раз")
 	}
 
-	countEntry.OnChanged = func(text string) {
-		if count, err := strconv.Atoi(text); err == nil {
-			e.block.Parameters["count"] = count
-			e.notifyChange()
-		}
+	countSlider.OnChanged = func(value float64) {
+		e.block.Parameters["count"] = int(value)
+		countValueLabel.SetText(fmt.Sprintf("%.0f раз", value))
+		e.notifyChange()
 	}
+
+	// Контейнер для ползунка
+	countContainer := container.NewBorder(nil, nil, nil, countValueLabel, countSlider)
 
 	cont.Add(loopTypeLabel)
 	cont.Add(loopTypeSelect)
 	cont.Add(countLabel)
-	cont.Add(countEntry)
+	cont.Add(countContainer)
 }
 
 // addTiltSensorControls добавляет элементы управления для датчика наклона
@@ -413,8 +444,43 @@ func (e *BlockEditor) addTiltSensorControls(cont *fyne.Container) {
 		e.block.Parameters["port"] = byte(1)
 	}
 
+	modeLabel := widget.NewLabel("Режим работы:")
+	modeSelect := widget.NewSelect([]string{
+		"Режим угла наклона (0)",
+		"Режим определения наклона (1)",
+		"Режим определения удара (2)",
+	}, func(selected string) {
+		var mode byte
+		switch selected {
+		case "Режим угла наклона (0)":
+			mode = 0
+		case "Режим определения наклона (1)":
+			mode = 1
+		case "Режим определения удара (2)":
+			mode = 2
+		}
+		e.block.Parameters["mode"] = mode
+		e.notifyChange()
+	})
+
+	if mode, ok := e.block.Parameters["mode"].(byte); ok {
+		switch mode {
+		case 0:
+			modeSelect.SetSelected("Режим угла наклона (0)")
+		case 1:
+			modeSelect.SetSelected("Режим определения наклона (1)")
+		case 2:
+			modeSelect.SetSelected("Режим определения удара (2)")
+		}
+	} else {
+		modeSelect.SetSelected("Режим определения наклона (1)")
+		e.block.Parameters["mode"] = byte(1)
+	}
+
 	cont.Add(portLabel)
 	cont.Add(portSelect)
+	cont.Add(modeLabel)
+	cont.Add(modeSelect)
 }
 
 // addDistanceSensorControls добавляет элементы управления для датчика расстояния
@@ -436,8 +502,36 @@ func (e *BlockEditor) addDistanceSensorControls(cont *fyne.Container) {
 		e.block.Parameters["port"] = byte(1)
 	}
 
+	modeLabel := widget.NewLabel("Режим работы:")
+	modeSelect := widget.NewSelect([]string{
+		"Измерение расстояния (0)",
+		"Подсчет объектов (1)",
+	}, func(selected string) {
+		var mode byte
+		if selected == "Подсчет объектов (1)" {
+			mode = 1
+		} else {
+			mode = 0
+		}
+		e.block.Parameters["mode"] = mode
+		e.notifyChange()
+	})
+
+	if mode, ok := e.block.Parameters["mode"].(byte); ok {
+		if mode == 1 {
+			modeSelect.SetSelected("Подсчет объектов (1)")
+		} else {
+			modeSelect.SetSelected("Измерение расстояния (0)")
+		}
+	} else {
+		modeSelect.SetSelected("Измерение расстояния (0)")
+		e.block.Parameters["mode"] = byte(0)
+	}
+
 	cont.Add(portLabel)
 	cont.Add(portSelect)
+	cont.Add(modeLabel)
+	cont.Add(modeSelect)
 }
 
 // addSoundControls добавляет элементы управления для звука
@@ -459,42 +553,88 @@ func (e *BlockEditor) addSoundControls(cont *fyne.Container) {
 		e.block.Parameters["port"] = byte(1)
 	}
 
-	freqLabel := widget.NewLabel("Частота (Гц):")
-	freqEntry := widget.NewEntry()
+	// Частота
+	freqLabel := widget.NewLabel("Частота (Гц, 100-2000):")
+	freqSlider := widget.NewSlider(100, 2000)
+	freqSlider.Step = 10
+	freqValueLabel := widget.NewLabel("")
 
 	if freq, ok := e.block.Parameters["frequency"].(uint16); ok {
-		freqEntry.SetText(fmt.Sprintf("%d", freq))
+		freqSlider.Value = float64(freq)
+		freqValueLabel.SetText(fmt.Sprintf("%d Гц", freq))
 	} else {
-		freqEntry.SetText("440")
+		freqSlider.Value = 440
 		e.block.Parameters["frequency"] = uint16(440)
+		freqValueLabel.SetText("440 Гц")
 	}
 
-	freqEntry.OnChanged = func(text string) {
-		if freq, err := strconv.ParseUint(text, 10, 16); err == nil {
-			e.block.Parameters["frequency"] = uint16(freq)
-			e.notifyChange()
-		}
+	freqSlider.OnChanged = func(value float64) {
+		e.block.Parameters["frequency"] = uint16(value)
+		freqValueLabel.SetText(fmt.Sprintf("%.0f Гц", value))
+		e.notifyChange()
 	}
 
-	durationLabel := widget.NewLabel("Длительность (мс):")
-	durationEntry := widget.NewEntry()
+	// Контейнер для ползунка частоты
+	freqContainer := container.NewBorder(nil, nil, nil, freqValueLabel, freqSlider)
+
+	// Длительность
+	durationLabel := widget.NewLabel("Длительность (мс, 100-5000):")
+	durationSlider := widget.NewSlider(100, 5000)
+	durationSlider.Step = 100
+	durationValueLabel := widget.NewLabel("")
 
 	if duration, ok := e.block.Parameters["duration"].(uint16); ok {
-		durationEntry.SetText(fmt.Sprintf("%d", duration))
+		durationSlider.Value = float64(duration)
+		durationValueLabel.SetText(fmt.Sprintf("%d мс", duration))
 	} else {
-		durationEntry.SetText("1000")
+		durationSlider.Value = 1000
 		e.block.Parameters["duration"] = uint16(1000)
+		durationValueLabel.SetText("1000 мс")
 	}
 
-	durationEntry.OnChanged = func(text string) {
-		if dur, err := strconv.ParseUint(text, 10, 16); err == nil {
-			e.block.Parameters["duration"] = uint16(dur)
-			e.notifyChange()
-		}
+	durationSlider.OnChanged = func(value float64) {
+		e.block.Parameters["duration"] = uint16(value)
+		durationValueLabel.SetText(fmt.Sprintf("%.0f мс", value))
+		e.notifyChange()
+	}
+
+	// Контейнер для ползунка длительности
+	durationContainer := container.NewBorder(nil, nil, nil, durationValueLabel, durationSlider)
+
+	// Предустановленные ноты
+	notesLabel := widget.NewLabel("Предустановленные ноты:")
+	notesContainer := container.NewGridWithColumns(3)
+
+	musicNotes := []struct {
+		name      string
+		frequency uint16
+	}{
+		{"До (C)", 262},
+		{"Ре (D)", 294},
+		{"Ми (E)", 330},
+		{"Фа (F)", 349},
+		{"Соль (G)", 392},
+		{"Ля (A)", 440},
+		{"Си (B)", 494},
+		{"До² (C²)", 523},
+	}
+
+	for _, note := range musicNotes {
+		btn := widget.NewButton(note.name, func(freq uint16, name string) func() {
+			return func() {
+				e.block.Parameters["frequency"] = freq
+				freqSlider.Value = float64(freq)
+				freqValueLabel.SetText(fmt.Sprintf("%d Гц", freq))
+				e.notifyChange()
+			}
+		}(note.frequency, note.name))
+
+		btn.Importance = widget.LowImportance
+		notesContainer.Add(btn)
 	}
 
 	// Кнопка теста
-	testButton := widget.NewButton("Тест", func() {
+	testButton := widget.NewButton("Тест звук", func() {
 		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
 			port := e.block.Parameters["port"].(byte)
 			frequency := e.block.Parameters["frequency"].(uint16)
@@ -513,14 +653,18 @@ func (e *BlockEditor) addSoundControls(cont *fyne.Container) {
 			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
 		}
 	})
+	testButton.Importance = widget.HighImportance
 
 	cont.Add(portLabel)
 	cont.Add(portSelect)
 	cont.Add(freqLabel)
-	cont.Add(freqEntry)
+	cont.Add(freqContainer)
 	cont.Add(durationLabel)
-	cont.Add(durationEntry)
-	cont.Add(testButton)
+	cont.Add(durationContainer)
+	cont.Add(notesLabel)
+	cont.Add(notesContainer)
+	cont.Add(layout.NewSpacer())
+	cont.Add(container.NewCenter(testButton))
 }
 
 // addSimpleSensorControls добавляет элементы управления для простых датчиков
