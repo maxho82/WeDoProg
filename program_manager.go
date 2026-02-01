@@ -11,13 +11,14 @@ import (
 
 // ProgramManager управляет программами
 type ProgramManager struct {
-	hubMgr        *HubManager
-	deviceMgr     *DeviceManager
-	program       *Program
-	programs      map[string]*Program
-	programsMu    sync.RWMutex
-	currentState  ProgramState
-	stateChangeCB func(state ProgramState) // Callback для изменения состояния
+	hubMgr         *HubManager
+	deviceMgr      *DeviceManager
+	program        *Program
+	programs       map[string]*Program
+	programsMu     sync.RWMutex
+	currentState   ProgramState
+	stateChangeCB  func(state ProgramState) // Callback для изменения состояния
+	currentBlockCB func(blockID int)        // Callback для отслеживания текущего блока
 }
 
 // Program представляет программу
@@ -79,6 +80,11 @@ const (
 	BlockTypeCurrentSensor
 	BlockTypeStop
 )
+
+// Метод для установки callback
+func (pm *ProgramManager) SetCurrentBlockCallback(callback func(blockID int)) {
+	pm.currentBlockCB = callback
+}
 
 // NewProgramManager создает менеджер программ
 func NewProgramManager(hubMgr *HubManager, deviceMgr *DeviceManager) *ProgramManager {
@@ -458,6 +464,11 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 
 	log.Println("=== Начало выполнения программы ===")
 
+	// Уведомляем о начале выполнения (блок "Начать")
+	if pm.currentBlockCB != nil {
+		pm.currentBlockCB(startBlock.ID)
+	}
+
 	for pm.currentState == ProgramStateRunning && currentBlock != nil {
 		if executedBlocks[currentBlock.ID] {
 			log.Printf("Предотвращение бесконечного цикла: блок %d уже выполнялся", currentBlock.ID)
@@ -465,7 +476,32 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 		}
 		executedBlocks[currentBlock.ID] = true
 
+		// Если это блок "Стоп", выполняем его и завершаем
+		if currentBlock.Type == BlockTypeStop {
+			log.Printf(">>> Выполнение блока: %s (ID: %d) <<<", currentBlock.Title, currentBlock.ID)
+
+			// Уведомляем о выполнении блока "Стоп"
+			if pm.currentBlockCB != nil {
+				pm.currentBlockCB(currentBlock.ID)
+			}
+
+			// Выполняем блок "Стоп"
+			if currentBlock.OnExecute != nil {
+				if err := currentBlock.OnExecute(); err != nil {
+					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
+				}
+			}
+
+			// Завершаем выполнение
+			break
+		}
+
 		log.Printf(">>> Выполнение блока: %s (ID: %d) <<<", currentBlock.Title, currentBlock.ID)
+
+		// Уведомляем о текущем выполняемом блоке
+		if pm.currentBlockCB != nil {
+			pm.currentBlockCB(currentBlock.ID)
+		}
 
 		// Выполняем блок
 		if currentBlock.OnExecute != nil {
@@ -502,7 +538,7 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 		}
 
 		if currentBlock.Type != BlockTypeWait {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond) // Добавляем небольшую задержку для визуализации
 		}
 	}
 
@@ -516,6 +552,11 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 
 	pm.ensureAllMotorsStopped()
 	log.Println("Все моторы остановлены")
+
+	// В конце выполнения сбрасываем выделение
+	if pm.currentBlockCB != nil {
+		pm.currentBlockCB(-1) // -1 означает сброс выделения
+	}
 
 	// В конце выполнения
 	pm.currentState = ProgramStateStopped

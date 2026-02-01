@@ -77,7 +77,52 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 		})
 	})
 
+	// Устанавливаем callback для отслеживания текущего выполняемого блока
+	programMgr.SetCurrentBlockCallback(func(blockID int) {
+		fyne.Do(func() {
+			gui.highlightExecutingBlock(blockID)
+		})
+	})
+
 	return gui
+}
+
+// Метод для выделения выполняемого блока
+func (gui *MainGUI) highlightExecutingBlock(blockID int) {
+	if blockID == -1 {
+		// Сбрасываем выделение
+		gui.programPanel.HighlightExecutingBlock(-1)
+		gui.programPanel.SetSelectedBlock(nil)
+		gui.selectedBlock = nil
+		return
+	}
+
+	// Находим блок по ID
+	var block *ProgramBlock
+	for _, b := range gui.programMgr.program.Blocks {
+		if b.ID == blockID {
+			block = b
+			break
+		}
+	}
+
+	if block != nil {
+		// Выделяем блок как выполняющийся
+		gui.programPanel.HighlightExecutingBlock(blockID)
+
+		// Прокручиваем панель, чтобы блок был виден
+		gui.scrollToBlock(block)
+	}
+}
+
+// Метод для прокрутки к блоку
+func (gui *MainGUI) scrollToBlock(block *ProgramBlock) {
+	if gui.programPanel != nil && gui.programPanel.scroll != nil {
+		// Прокручиваем к позиции блока
+		pos := fyne.NewPos(float32(block.X)-100, float32(block.Y)-100)
+		gui.programPanel.scroll.Offset = pos
+		gui.programPanel.scroll.Refresh()
+	}
 }
 
 // BuildUI строит интерфейс приложения

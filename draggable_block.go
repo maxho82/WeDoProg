@@ -19,10 +19,13 @@ type DraggableBlock struct {
 	gui             *MainGUI
 	content         fyne.CanvasObject
 	isSelected      bool
+	isExecuting     bool // Флаг выполнения
 	connectorTop    *canvas.Circle
 	connectorBottom *canvas.Circle
 	selectionBorder *canvas.Rectangle
-	highlightColor  color.Color // Цвет выделения
+	executingBorder *canvas.Rectangle // Отдельная рамка для выполнения
+	highlightColor  color.Color       // Цвет выделения
+	executingColor  color.Color       // Цвет выполнения
 }
 
 // draggableBlockRenderer рендерер для DraggableBlock
@@ -38,7 +41,9 @@ func NewDraggableBlock(block *ProgramBlock, programMgr *ProgramManager, gui *Mai
 		programMgr:     programMgr,
 		gui:            gui,
 		isSelected:     false,
+		isExecuting:    false,
 		highlightColor: color.NRGBA{R: 255, G: 215, B: 0, A: 255}, // Желтый цвет выделения
+		executingColor: color.NRGBA{R: 0, G: 255, B: 0, A: 255},   // Зеленый цвет выполнения
 	}
 
 	d.ExtendBaseWidget(d)
@@ -122,6 +127,13 @@ func (d *DraggableBlock) createContent() {
 		d.connectorBottom,
 	)
 
+	// Рамка выделения выполнения (зеленая)
+	d.executingBorder = canvas.NewRectangle(color.Transparent)
+	d.executingBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+12, float32(d.block.Height)+12))
+	d.executingBorder.CornerRadius = cornerRadius + 3
+	d.executingBorder.StrokeColor = color.Transparent
+	d.executingBorder.StrokeWidth = 6 // Толстая рамка для выполнения
+
 	// ВАЖНО: Порядок элементов в Stack имеет значение!
 	// 1. Фон (bg)
 	// 2. Содержимое (content)
@@ -131,6 +143,7 @@ func (d *DraggableBlock) createContent() {
 		bg,
 		container.NewPadded(content),
 		d.selectionBorder,
+		d.executingBorder,
 		connectors,
 	)
 }
@@ -196,7 +209,11 @@ func (d *DraggableBlock) SetSelected(selected bool) {
 	}
 
 	d.isSelected = selected
+	if selected {
+		d.isExecuting = false // Сбрасываем выделение выполнения при обычном выделении
+	}
 	d.updateSelection()
+	d.updateExecution()
 }
 
 // updateSelection обновляет внешний вид блока в зависимости от выделения
@@ -226,6 +243,33 @@ func (d *DraggableBlock) GetBottomConnectorPosition() fyne.Position {
 	blockPos := d.Position()
 	blockSize := d.Size()
 	return fyne.NewPos(blockPos.X+blockSize.Width/2, blockPos.Y+blockSize.Height)
+}
+
+// Метод для установки состояния выполнения:
+func (d *DraggableBlock) SetExecuting(executing bool) {
+	// Блок "Стоп" не выделяем как выполняющийся
+	if d.block.Type == BlockTypeStop {
+		return
+	}
+
+	d.isExecuting = executing
+	d.updateExecution()
+	d.Refresh()
+}
+
+// Метод для обновления отображения выполнения:
+func (d *DraggableBlock) updateExecution() {
+	if d.executingBorder != nil {
+		if d.isExecuting {
+			d.executingBorder.StrokeColor = d.executingColor // Зеленая рамка
+			d.executingBorder.StrokeWidth = 6                // 6 пикселей
+		} else {
+			d.executingBorder.StrokeColor = color.Transparent
+			d.executingBorder.StrokeWidth = 0
+		}
+		d.executingBorder.Refresh()
+	}
+	d.Refresh()
 }
 
 // parseColor преобразует строку цвета в color.Color

@@ -494,3 +494,45 @@ func (p *ProgramPanel) insertBlockToProgram(block *ProgramBlock, index int) {
 
 	log.Printf("Блок %d вставлен в программу на позицию %d", block.ID, index)
 }
+
+// Метод для выделения блока выполнения
+func (p *ProgramPanel) HighlightExecutingBlock(blockID int) {
+	if blockID == -1 {
+		// Сбрасываем выделение
+		for _, widget := range p.blockWidgets {
+			widget.SetExecuting(false)
+		}
+		p.content.Refresh()
+		return
+	}
+
+	// Находим блок
+	var block *ProgramBlock
+	for _, b := range p.programMgr.program.Blocks {
+		if b.ID == blockID {
+			block = b
+			break
+		}
+	}
+
+	if block != nil {
+		p.highlightBlockAsExecuting(block)
+	}
+}
+
+// highlightBlockAsExecuting выделяет блок как выполняющийся
+func (p *ProgramPanel) highlightBlockAsExecuting(block *ProgramBlock) {
+	// Сбрасываем предыдущее выделение выполнения
+	for _, widget := range p.blockWidgets {
+		widget.SetExecuting(false)
+	}
+
+	// Устанавливаем выделение выполнения для текущего блока
+	if widget, exists := p.blockWidgets[block.ID]; exists {
+		widget.SetExecuting(true)
+	}
+
+	// Также подсвечиваем соответствующую связь
+	p.HighlightConnections(block)
+	p.content.Refresh()
+}
