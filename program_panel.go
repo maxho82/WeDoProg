@@ -92,6 +92,25 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 		return
 	}
 
+	// Проверяем особые случаи для блоков "Начать" и "Стоп"
+	if block.Type == BlockTypeStart {
+		// Проверяем, есть ли уже блок "Начать"
+		for _, b := range p.programMgr.program.Blocks {
+			if b.Type == BlockTypeStart {
+				log.Println("Блок 'Начать' уже существует в программе")
+				return
+			}
+		}
+	} else if block.Type == BlockTypeStop {
+		// Проверяем, есть ли уже блок "Стоп"
+		for _, b := range p.programMgr.program.Blocks {
+			if b.Type == BlockTypeStop {
+				log.Println("Блок 'Стоп' уже существует в программе")
+				return
+			}
+		}
+	}
+
 	// Определяем индекс вставки в программу
 	insertIndex := p.calculateInsertIndex()
 
@@ -258,6 +277,26 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 // RemoveBlock удаляет блок с холста
 func (p *ProgramPanel) RemoveBlock(blockID int) {
 	log.Printf("Начинаем удаление блока %d с холста", blockID)
+
+	// Находим блок для удаления
+	var blockToRemove *ProgramBlock
+	for _, block := range p.programMgr.program.Blocks {
+		if block.ID == blockID {
+			blockToRemove = block
+			break
+		}
+	}
+
+	if blockToRemove == nil {
+		log.Printf("Блок %d не найден в программе", blockID)
+		return
+	}
+
+	// Проверяем, нельзя ли удалять блоки "Начать" и "Стоп"
+	if blockToRemove.Type == BlockTypeStart || blockToRemove.Type == BlockTypeStop {
+		log.Printf("Блок '%s' (ID: %d) нельзя удалять", blockToRemove.Title, blockID)
+		return
+	}
 
 	// Находим индекс удаляемого блока
 	removeIndex := -1

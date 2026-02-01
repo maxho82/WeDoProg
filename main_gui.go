@@ -45,6 +45,9 @@ type MainGUI struct {
 	connectedDevices map[byte]*Device
 	availableBlocks  map[BlockType]bool
 	selectedBlock    *ProgramBlock
+
+	// Кнопки блоков для управления их состоянием
+	blockButtons map[BlockType]*widget.Button
 }
 
 // NewMainGUI создает новый GUI
@@ -65,6 +68,14 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	hubMgr.SetHubInfoUpdateCallback(gui.UpdateHubInfoDisplay)
 	hubMgr.SetDeviceUpdateCallback(gui.UpdateDeviceDisplay)
 	hubMgr.SetConnectionStateCallback(gui.updateConnectionStatus)
+
+	// Устанавливаем callback для отслеживания состояния программы
+	programMgr.SetStateChangeCallback(func(state ProgramState) {
+		// Обновляем UI в главном потоке
+		fyne.Do(func() {
+			gui.updateToolbarState()
+		})
+	})
 
 	return gui
 }
@@ -104,6 +115,9 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	// Настраиваем горячие клавиши
 	gui.setupKeyboardShortcuts()
 
+	// Добавляем начальные блоки после создания всех панелей
+	gui.addInitialBlocks()
+
 	return mainContainer
 }
 
@@ -134,9 +148,7 @@ func (gui *MainGUI) deleteSelectedBlock() {
 				log.Printf("Блок %d удален", blockID)
 
 				// Обновляем состояние кнопок
-				hasProgram := len(gui.programMgr.program.Blocks) > 0
-				isConnected := gui.hubMgr != nil && gui.hubMgr.IsConnected()
-				gui.updateToolbarState(isConnected, hasProgram)
+				gui.updateToolbarState()
 			}
 		}, gui.window)
 }
@@ -185,15 +197,18 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	blocksContainer.Add(container.NewCenter(title))
 	blocksContainer.Add(widget.NewSeparator())
 
+	// Инициализируем карту кнопок
+	gui.blockButtons = make(map[BlockType]*widget.Button)
+
 	// Категории блоков
 	categories := []struct {
 		name   string
 		blocks []BlockType
 	}{
-		{"Управление", []BlockType{BlockTypeStart, BlockTypeWait, BlockTypeLoop, BlockTypeStop}},
+		{"Управление", []BlockType{BlockTypeStart, BlockTypeStop}},
 		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound}},
 		{"Датчики", []BlockType{BlockTypeTiltSensor, BlockTypeDistanceSensor, BlockTypeVoltageSensor, BlockTypeCurrentSensor}},
-		{"Логика", []BlockType{BlockTypeCondition}},
+		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoop, BlockTypeCondition}},
 	}
 
 	for _, category := range categories {
@@ -212,18 +227,23 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 					block := gui.programMgr.CreateBlock(bt, 0, 0)
 
 					// Добавляем блок на панель программирования
-					// programPanel сам определит правильную позицию
 					gui.programPanel.AddBlock(block)
 
 					// Обновляем состояние кнопок
-					hasProgram := len(gui.programMgr.program.Blocks) > 0
-					gui.updateToolbarState(gui.hubMgr.IsConnected(), hasProgram)
+					gui.updateBlockButtonsState()
+					gui.updateToolbarState()
 
 					log.Printf("Добавлен новый блок: %s (ID: %d)", block.Title, block.ID)
 				}
 			}(blockType))
 
 			blockButton.Importance = widget.LowImportance
+
+			// Сохраняем кнопку в карту (кроме блока "Начать")
+			if blockType != BlockTypeStart && blockType != BlockTypeStop {
+				gui.blockButtons[blockType] = blockButton
+			}
+
 			blocksContainer.Add(blockButton)
 		}
 
@@ -233,6 +253,45 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	scroll := container.NewVScroll(container.NewPadded(blocksContainer))
 	scroll.SetMinSize(fyne.NewSize(220, 400))
 	return scroll
+}
+
+// updateBlockButtonsState обновляет состояние кнопок блоков
+func (gui *MainGUI) updateBlockButtonsState() {
+	// Проверяем, есть ли блок "Начать"
+	hasStartBlock := false
+	for _, block := range gui.programMgr.program.Blocks {
+		if block.Type == BlockTypeStart {
+			hasStartBlock = true
+			break
+		}
+	}
+
+	// Проверяем, есть ли блок "Стоп"
+	hasStopBlock := false
+	for _, block := range gui.programMgr.program.Blocks {
+		if block.Type == BlockTypeStop {
+			hasStopBlock = true
+			break
+		}
+	}
+
+	// Если нет блока "Начать", все кнопки блоков (кроме "Начать") должны быть неактивны
+	// Если есть блок "Начать", но нет блока "Стоп", нужно создать блок "Стоп" автоматически
+	if hasStartBlock && !hasStopBlock {
+		// Автоматически создаем блок "Стоп"
+		stopBlock := gui.programMgr.CreateBlock(BlockTypeStop, 0, 0)
+		gui.programPanel.AddBlock(stopBlock)
+		log.Println("Автоматически создан блок 'Стоп'")
+	}
+
+	// Обновляем состояние кнопок
+	for _, button := range gui.blockButtons {
+		if hasStartBlock {
+			button.Enable()
+		} else {
+			button.Disable()
+		}
+	}
 }
 
 // getBlockName возвращает имя блока по типу
@@ -689,15 +748,33 @@ func (gui *MainGUI) ForceUpdateUI() {
 			gui.availableBlocks = make(map[BlockType]bool)
 		}
 
-		hasProgram := len(gui.programMgr.program.Blocks) > 0
-		if gui.toolbar != nil {
-			gui.toolbar.UpdateState(isConnected, hasProgram)
-		}
+		gui.updateToolbarState()
 	})
 }
 
-func (gui *MainGUI) updateToolbarState(isConnected bool, hasProgram bool) {
-	if gui.toolbar != nil {
-		gui.toolbar.UpdateState(isConnected, hasProgram)
+// updateToolbarState обновляет состояние панели инструментов на основе текущего состояния
+func (gui *MainGUI) updateToolbarState() {
+	if gui.toolbar == nil {
+		return
+	}
+
+	isConnected := gui.hubMgr.IsConnected()
+	hasProgram := len(gui.programMgr.program.Blocks) > 0
+	isRunning := gui.programMgr.GetProgramState() == ProgramStateRunning
+
+	gui.toolbar.UpdateState(isConnected, hasProgram, isRunning)
+}
+
+// addInitialBlocks добавляет начальные блоки "Начать" и "Стоп"
+func (gui *MainGUI) addInitialBlocks() {
+	// Проверяем, есть ли уже блоки в программе
+	if len(gui.programMgr.program.Blocks) == 0 {
+		// Создаем блок "Начать"
+		startBlock := gui.programMgr.CreateBlock(BlockTypeStart, 0, 0)
+		gui.programPanel.AddBlock(startBlock)
+		log.Println("Добавлен начальный блок 'Начать'")
+
+		// Обновляем состояние кнопок
+		gui.updateBlockButtonsState()
 	}
 }

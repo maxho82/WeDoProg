@@ -55,20 +55,38 @@ func (d *DraggableBlock) createContent() {
 		blockColor = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
 	}
 
+	// Для блоков "Начать" и "Стоп" используем другую форму (овал)
+	var cornerRadius float32 = 8
+
+	if d.block.Type == BlockTypeStart || d.block.Type == BlockTypeStop {
+		// Для овальной формы делаем радиус скругления равным половине высоты
+		cornerRadius = float32(d.block.Height) / 2
+	}
+
 	// Фон блока
 	bg := canvas.NewRectangle(blockColor)
 	bg.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
-	bg.CornerRadius = 8
+	bg.CornerRadius = cornerRadius
 
 	// Добавляем выделение при выборе (желтая рамка 5 пикселей)
 	d.selectionBorder = canvas.NewRectangle(color.Transparent)
 	d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
-	d.selectionBorder.CornerRadius = 10
+	d.selectionBorder.CornerRadius = cornerRadius + 2
 	d.selectionBorder.StrokeColor = color.Transparent
 	d.selectionBorder.StrokeWidth = 5 // Толщина рамки выделения
 
-	// Иконка
-	icon := canvas.NewText("◼", color.White)
+	// Иконка в зависимости от типа блока
+	var iconText string
+	switch d.block.Type {
+	case BlockTypeStart:
+		iconText = "▶"
+	case BlockTypeStop:
+		iconText = "■"
+	default:
+		iconText = "◼"
+	}
+
+	icon := canvas.NewText(iconText, color.White)
 	icon.TextSize = 20
 
 	// Заголовок
@@ -89,7 +107,7 @@ func (d *DraggableBlock) createContent() {
 		container.NewCenter(desc),
 	)
 
-	// Создаем коннекторы (точки соединения)
+	// Создаем коннекторы (точки соединения) - для блоков Начать и Стоп только один коннектор
 	d.connectorTop = canvas.NewCircle(color.Transparent)
 	d.connectorTop.StrokeWidth = 0
 	d.connectorTop.Resize(fyne.NewSize(1, 1))
@@ -127,24 +145,31 @@ func (d *DraggableBlock) CreateRenderer() fyne.WidgetRenderer {
 
 // Tapped обработка клика по блоку
 func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
+	// Проверяем, можно ли выбирать блок
+	if d.block.Type == BlockTypeStop {
+		// Блок "Стоп" нельзя выбирать - он всегда в конце
+		return
+	}
+
 	log.Printf("Клик по блоку: %s (ID: %d)", d.block.Title, d.block.ID)
 
 	// Устанавливаем выбранный блок в GUI
 	d.gui.selectedBlock = d.block
 	d.gui.programPanel.SetSelectedBlock(d.block)
 
-	// Показываем свойства блока
-	d.gui.showBlockProperties(d.block)
-
-	// Если это не стартовый блок, предлагаем соединить с предыдущим
-	if d.block.Type != BlockTypeStart && d.block.NextBlockID == 0 {
-		// Автоматически соединяем с предыдущим блоком, если он есть
-		d.autoConnectToPrevious()
+	// Показываем свойства блока (кроме блока "Стоп")
+	if d.block.Type != BlockTypeStop {
+		d.gui.showBlockProperties(d.block)
 	}
 }
 
 // TappedSecondary обработка правого клика по блоку
 func (d *DraggableBlock) TappedSecondary(e *fyne.PointEvent) {
+	// Блоки "Начать" и "Стоп" нельзя удалять
+	if d.block.Type == BlockTypeStart || d.block.Type == BlockTypeStop {
+		return
+	}
+
 	// Создаем контекстное меню
 	menu := fyne.NewMenu("",
 		fyne.NewMenuItem("Удалить", func() {
@@ -165,6 +190,11 @@ func (d *DraggableBlock) TappedSecondary(e *fyne.PointEvent) {
 
 // SetSelected устанавливает состояние выделения блока
 func (d *DraggableBlock) SetSelected(selected bool) {
+	// Блок "Стоп" нельзя выделять
+	if d.block.Type == BlockTypeStop {
+		return
+	}
+
 	d.isSelected = selected
 	d.updateSelection()
 }
@@ -182,27 +212,6 @@ func (d *DraggableBlock) updateSelection() {
 		d.selectionBorder.Refresh()
 	}
 	d.Refresh()
-}
-
-// autoConnectToPrevious автоматически соединяет с предыдущим блоком
-func (d *DraggableBlock) autoConnectToPrevious() {
-	// Находим последний блок в программе (кроме текущего)
-	var lastBlock *ProgramBlock
-	for _, block := range d.programMgr.program.Blocks {
-		if block.ID != d.block.ID {
-			lastBlock = block
-		}
-	}
-
-	if lastBlock != nil && lastBlock.NextBlockID == 0 {
-		// Соединяем последний блок с текущим
-		d.programMgr.AddConnection(lastBlock.ID, d.block.ID)
-
-		// Обновляем визуальное соединение - УДАЛЕН ВЫЗОВ
-		// d.gui.programPanel.updateConnections() // Этот метод больше не существует
-
-		log.Printf("Автоматически соединен блок %d -> блок %d", lastBlock.ID, d.block.ID)
-	}
 }
 
 // GetTopConnectorPosition возвращает позицию верхнего коннектора

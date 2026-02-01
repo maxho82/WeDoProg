@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"fyne.io/fyne/v2"
@@ -38,14 +39,21 @@ func (t *Toolbar) GetContainer() fyne.CanvasObject {
 }
 
 // UpdateState обновляет состояние кнопок панели инструментов
-func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool) {
+func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool) {
 	if t.runButton != nil && t.stopButton != nil {
-		if isConnected {
+		if isConnected && hasProgram && !isRunning {
 			t.runButton.Enable()
+			t.stopButton.Disable()
+		} else if isRunning {
+			t.runButton.Disable()
 			t.stopButton.Enable()
+			// Устанавливаем зеленый цвет для кнопки запуска
+			t.runButton.Importance = widget.SuccessImportance
 		} else {
 			t.runButton.Disable()
 			t.stopButton.Disable()
+			// Возвращаем обычный цвет
+			t.runButton.Importance = widget.HighImportance
 		}
 	}
 
@@ -83,12 +91,43 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	t.runButton = widget.NewButtonWithIcon("Запуск", theme.MediaPlayIcon(), func() {
 		if t.gui != nil && t.gui.programMgr != nil {
 			log.Println("Запуск программы...")
+
+			// Проверяем, есть ли блок "Начать"
+			hasStartBlock := false
+			for _, block := range t.gui.programMgr.program.Blocks {
+				if block.Type == BlockTypeStart {
+					hasStartBlock = true
+					break
+				}
+			}
+
+			if !hasStartBlock {
+				dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Начать'"), t.gui.window)
+				return
+			}
+
+			// Проверяем, есть ли блок "Стоп"
+			hasStopBlock := false
+			for _, block := range t.gui.programMgr.program.Blocks {
+				if block.Type == BlockTypeStop {
+					hasStopBlock = true
+					break
+				}
+			}
+
+			if !hasStopBlock {
+				dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Стоп'"), t.gui.window)
+				return
+			}
+
 			err := t.gui.programMgr.RunProgram()
 			if err != nil {
 				log.Printf("Ошибка запуска программы: %v", err)
 				dialog.ShowError(err, t.gui.window)
 			} else {
 				log.Println("Программа успешно запущена")
+				// Обновляем состояние кнопок
+				t.UpdateState(true, true, true)
 			}
 		}
 	})

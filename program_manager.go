@@ -11,12 +11,13 @@ import (
 
 // ProgramManager управляет программами
 type ProgramManager struct {
-	hubMgr       *HubManager
-	deviceMgr    *DeviceManager
-	program      *Program
-	programs     map[string]*Program
-	programsMu   sync.RWMutex
-	currentState ProgramState
+	hubMgr        *HubManager
+	deviceMgr     *DeviceManager
+	program       *Program
+	programs      map[string]*Program
+	programsMu    sync.RWMutex
+	currentState  ProgramState
+	stateChangeCB func(state ProgramState) // Callback для изменения состояния
 }
 
 // Program представляет программу
@@ -417,22 +418,31 @@ func (pm *ProgramManager) RunProgram() error {
 	// Находим стартовый блок
 	var startBlock *ProgramBlock
 	for _, block := range pm.program.Blocks {
-		if block.IsStart {
+		if block.Type == BlockTypeStart {
 			startBlock = block
 			break
 		}
 	}
 
 	if startBlock == nil {
-		if len(pm.program.Blocks) > 0 {
-			startBlock = pm.program.Blocks[0]
-			log.Println("Стартовый блок не найден, используем первый блок в программе")
-		} else {
-			return fmt.Errorf("нет блоков для выполнения")
+		return fmt.Errorf("программа должна содержать блок 'Начать'")
+	}
+
+	// Находим блок "Стоп"
+	var hasStopBlock bool
+	for _, block := range pm.program.Blocks {
+		if block.Type == BlockTypeStop {
+			hasStopBlock = true
+			break
 		}
 	}
 
+	if !hasStopBlock {
+		return fmt.Errorf("программа должна содержать блок 'Стоп'")
+	}
+
 	pm.currentState = ProgramStateRunning
+	pm.notifyStateChange() // Уведомляем об изменении состояния
 	log.Println("Запуск программы...")
 
 	// Запускаем выполнение в отдельной горутине
@@ -506,6 +516,11 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 
 	pm.ensureAllMotorsStopped()
 	log.Println("Все моторы остановлены")
+
+	// В конце выполнения
+	pm.currentState = ProgramStateStopped
+	pm.notifyStateChange() // Уведомляем об изменении состояния
+	log.Println("=== Программа завершена успешно ===")
 }
 
 // ensureAllMotorsStopped гарантирует остановку всех моторов
@@ -523,6 +538,7 @@ func (pm *ProgramManager) ensureAllMotorsStopped() {
 func (pm *ProgramManager) StopProgram() {
 	if pm.currentState == ProgramStateRunning {
 		pm.currentState = ProgramStateStopped
+		pm.notifyStateChange() // Уведомляем об изменении состояния
 		log.Println("Программа остановлена")
 		pm.ensureAllMotorsStopped()
 		pm.stopAllSounds()
@@ -773,4 +789,16 @@ func (pm *ProgramManager) rebuildConnections() {
 	}
 
 	log.Printf("Связи перестроены. Создано %d соединений", len(pm.program.Connections))
+}
+
+// SetStateChangeCallback устанавливает callback для отслеживания состояния
+func (pm *ProgramManager) SetStateChangeCallback(callback func(state ProgramState)) {
+	pm.stateChangeCB = callback
+}
+
+// notifyStateChange уведомляет об изменении состояния
+func (pm *ProgramManager) notifyStateChange() {
+	if pm.stateChangeCB != nil {
+		pm.stateChangeCB(pm.currentState)
+	}
 }
