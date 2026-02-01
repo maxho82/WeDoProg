@@ -122,12 +122,6 @@ func (gui *MainGUI) deleteSelectedBlock() {
 			if confirmed {
 				log.Printf("Начинаем удаление блока %d", blockID)
 
-				// Удаляем блок из менеджера программ
-				success := gui.programMgr.RemoveBlock(blockID)
-				if !success {
-					log.Printf("Не удалось удалить блок %d из менеджера программ", blockID)
-				}
-
 				// Удаляем блок с панели программирования
 				gui.programPanel.RemoveBlock(blockID)
 
@@ -214,10 +208,17 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 			blockName := gui.getBlockName(blockType)
 			blockButton := widget.NewButton(blockName, func(bt BlockType) func() {
 				return func() {
-					block := gui.programMgr.CreateBlock(bt, 100, 100)
+					// Создаем блок (позиция будет вычислена в programPanel)
+					block := gui.programMgr.CreateBlock(bt, 0, 0)
+
+					// Добавляем блок на панель программирования
+					// programPanel сам определит правильную позицию
 					gui.programPanel.AddBlock(block)
+
+					// Обновляем состояние кнопок
 					hasProgram := len(gui.programMgr.program.Blocks) > 0
 					gui.updateToolbarState(gui.hubMgr.IsConnected(), hasProgram)
+
 					log.Printf("Добавлен новый блок: %s (ID: %d)", block.Title, block.ID)
 				}
 			}(blockType))
@@ -269,7 +270,6 @@ func (gui *MainGUI) getBlockName(blockType BlockType) string {
 // showBlockProperties показывает свойства выбранного блока
 func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
 	gui.selectedBlock = block
-	gui.programPanel.SetSelectedBlock(block)
 
 	if gui.propertiesPanel != nil {
 		container, ok := gui.propertiesPanel.Content.(*fyne.Container)

@@ -127,9 +127,9 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
-	// Контейнер для ползунка мощности
+	// Контейнер для ползунка мощности - ИСПРАВЛЕНО: не вызываем SetMinSize
 	powerContainer := container.NewBorder(nil, nil, nil, powerValueLabel, powerSlider)
-	powerContainer.SetMinSize(fyne.NewSize(250, 40)) // Минимальная ширина для ползунка
+	// УБРАНО: powerContainer.SetMinSize(fyne.NewSize(250, 40))
 
 	// Длительность
 	durationLabelWidget := widget.NewLabel("Длительность (мс, 0 = бесконечно):")

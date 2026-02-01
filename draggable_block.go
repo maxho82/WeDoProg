@@ -8,33 +8,37 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
-// DraggableBlock перетаскиваемый блок программирования
+// DraggableBlock блок программирования без перетаскивания
 type DraggableBlock struct {
 	widget.BaseWidget
 	block           *ProgramBlock
 	programMgr      *ProgramManager
 	gui             *MainGUI
 	content         fyne.CanvasObject
-	isDragging      bool
-	dragStart       fyne.Position
-	blockStartPos   fyne.Position // Новая переменная для хранения начальной позиции блока
 	isSelected      bool
 	connectorTop    *canvas.Circle
 	connectorBottom *canvas.Circle
 	selectionBorder *canvas.Rectangle
+	highlightColor  color.Color // Цвет выделения
 }
 
-// NewDraggableBlock создает перетаскиваемый блок
+// draggableBlockRenderer рендерер для DraggableBlock
+type draggableBlockRenderer struct {
+	widget  *DraggableBlock
+	objects []fyne.CanvasObject
+}
+
+// NewDraggableBlock создает блок
 func NewDraggableBlock(block *ProgramBlock, programMgr *ProgramManager, gui *MainGUI) *DraggableBlock {
 	d := &DraggableBlock{
-		block:      block,
-		programMgr: programMgr,
-		gui:        gui,
-		isSelected: false,
+		block:          block,
+		programMgr:     programMgr,
+		gui:            gui,
+		isSelected:     false,
+		highlightColor: color.NRGBA{R: 255, G: 215, B: 0, A: 255}, // Желтый цвет выделения
 	}
 
 	d.ExtendBaseWidget(d)
@@ -54,16 +58,16 @@ func (d *DraggableBlock) createContent() {
 	// Фон блока
 	bg := canvas.NewRectangle(blockColor)
 	bg.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
-	bg.CornerRadius = 5
+	bg.CornerRadius = 8
 
-	// Добавляем выделение при выборе
+	// Добавляем выделение при выборе (желтая рамка 5 пикселей)
 	d.selectionBorder = canvas.NewRectangle(color.Transparent)
-	d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+4, float32(d.block.Height)+4))
-	d.selectionBorder.CornerRadius = 7
+	d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
+	d.selectionBorder.CornerRadius = 10
 	d.selectionBorder.StrokeColor = color.Transparent
-	d.selectionBorder.StrokeWidth = 2
+	d.selectionBorder.StrokeWidth = 5 // Толщина рамки выделения
 
-	// Иконка (заглушка)
+	// Иконка
 	icon := canvas.NewText("◼", color.White)
 	icon.TextSize = 20
 
@@ -85,7 +89,7 @@ func (d *DraggableBlock) createContent() {
 		container.NewCenter(desc),
 	)
 
-	// Создаем коннекторы (точки соединения) - делаем их невидимыми
+	// Создаем коннекторы (точки соединения)
 	d.connectorTop = canvas.NewCircle(color.Transparent)
 	d.connectorTop.StrokeWidth = 0
 	d.connectorTop.Resize(fyne.NewSize(1, 1))
@@ -100,11 +104,15 @@ func (d *DraggableBlock) createContent() {
 		d.connectorBottom,
 	)
 
-	// Объединяем все элементы
+	// ВАЖНО: Порядок элементов в Stack имеет значение!
+	// 1. Фон (bg)
+	// 2. Содержимое (content)
+	// 3. Рамка выделения (selectionBorder) - должна быть над фоном, но под коннекторами
+	// 4. Коннекторы (connectors) - должны быть сверху всего
 	d.content = container.NewStack(
-		d.selectionBorder,
 		bg,
 		container.NewPadded(content),
+		d.selectionBorder,
 		connectors,
 	)
 }
@@ -121,8 +129,12 @@ func (d *DraggableBlock) CreateRenderer() fyne.WidgetRenderer {
 func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
 	log.Printf("Клик по блоку: %s (ID: %d)", d.block.Title, d.block.ID)
 
-	// Выделяем этот блок и показываем его свойства
-	d.selectBlock()
+	// Устанавливаем выбранный блок в GUI
+	d.gui.selectedBlock = d.block
+	d.gui.programPanel.SetSelectedBlock(d.block)
+
+	// Показываем свойства блока
+	d.gui.showBlockProperties(d.block)
 
 	// Если это не стартовый блок, предлагаем соединить с предыдущим
 	if d.block.Type != BlockTypeStart && d.block.NextBlockID == 0 {
@@ -143,7 +155,7 @@ func (d *DraggableBlock) TappedSecondary(e *fyne.PointEvent) {
 		}),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Свойства", func() {
-			d.selectBlock()
+			d.gui.showBlockProperties(d.block)
 		}),
 	)
 
@@ -151,26 +163,9 @@ func (d *DraggableBlock) TappedSecondary(e *fyne.PointEvent) {
 	widget.ShowPopUpMenuAtPosition(menu, d.gui.window.Canvas(), e.AbsolutePosition)
 }
 
-// selectBlock выделяет этот блок и показывает его свойства
-func (d *DraggableBlock) selectBlock() {
-	// Снимаем выделение со всех блоков
-	for _, obj := range d.gui.programPanel.content.Objects {
-		if block, ok := obj.(*DraggableBlock); ok {
-			block.deselect()
-		}
-	}
-
-	// Выделяем этот блок
-	d.isSelected = true
-	d.updateSelection()
-
-	// Показываем свойства блока
-	d.gui.showBlockProperties(d.block)
-}
-
-// deselect снимает выделение с блока
-func (d *DraggableBlock) deselect() {
-	d.isSelected = false
+// SetSelected устанавливает состояние выделения блока
+func (d *DraggableBlock) SetSelected(selected bool) {
+	d.isSelected = selected
 	d.updateSelection()
 }
 
@@ -178,9 +173,11 @@ func (d *DraggableBlock) deselect() {
 func (d *DraggableBlock) updateSelection() {
 	if d.selectionBorder != nil {
 		if d.isSelected {
-			d.selectionBorder.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255}
+			d.selectionBorder.StrokeColor = d.highlightColor // Желтая рамка
+			d.selectionBorder.StrokeWidth = 5                // 5 пикселей
 		} else {
 			d.selectionBorder.StrokeColor = color.Transparent
+			d.selectionBorder.StrokeWidth = 0
 		}
 		d.selectionBorder.Refresh()
 	}
@@ -201,153 +198,11 @@ func (d *DraggableBlock) autoConnectToPrevious() {
 		// Соединяем последний блок с текущим
 		d.programMgr.AddConnection(lastBlock.ID, d.block.ID)
 
-		// Обновляем визуальное соединение
-		d.gui.programPanel.updateConnections()
+		// Обновляем визуальное соединение - УДАЛЕН ВЫЗОВ
+		// d.gui.programPanel.updateConnections() // Этот метод больше не существует
 
 		log.Printf("Автоматически соединен блок %d -> блок %d", lastBlock.ID, d.block.ID)
 	}
-}
-
-// Dragged обработка перетаскивания (для интерфейса fyne.Draggable)
-func (d *DraggableBlock) Dragged(e *fyne.DragEvent) {
-	if !d.isDragging {
-		d.isDragging = true
-		d.dragStart = e.Position
-		d.blockStartPos = d.Position()
-		return
-	}
-
-	// Вычисляем новую позицию
-	newPos := fyne.NewPos(
-		d.blockStartPos.X+e.Dragged.DX,
-		d.blockStartPos.Y+e.Dragged.DY,
-	)
-
-	// Ограничиваем минимальные координаты
-	if newPos.X < 0 {
-		newPos.X = 0
-	}
-	if newPos.Y < 0 {
-		newPos.Y = 0
-	}
-
-	// Перемещаем блок
-	d.Move(newPos)
-
-	// Обновляем данные блока
-	d.block.X = float64(newPos.X)
-	d.block.Y = float64(newPos.Y)
-	d.block.DragStartPos = newPos
-
-	// Обновляем позиции коннекторов
-	d.updateConnectorPositions()
-
-	// Обновляем соединения
-	d.gui.programPanel.updateConnections()
-}
-
-// updateConnectorPositions обновляет позиции коннекторов
-func (d *DraggableBlock) updateConnectorPositions() {
-	blockPos := d.Position()
-	blockSize := d.Size()
-
-	// Верхний коннектор (центр верхней границы)
-	topX := blockPos.X + blockSize.Width/2
-	topY := blockPos.Y
-	d.connectorTop.Move(fyne.NewPos(topX-0.5, topY-0.5))
-
-	// Нижний коннектор (центр нижней границы)
-	bottomX := blockPos.X + blockSize.Width/2
-	bottomY := blockPos.Y + blockSize.Height
-	d.connectorBottom.Move(fyne.NewPos(bottomX-0.5, bottomY-0.5))
-
-	d.connectorTop.Refresh()
-	d.connectorBottom.Refresh()
-}
-
-// DragEnd завершение перетаскивания
-func (d *DraggableBlock) DragEnd() {
-	if d.isDragging {
-		d.isDragging = false
-
-		// Обновляем позицию в менеджере программ
-		d.programMgr.UpdateBlockPosition(d.block.ID, d.block.X, d.block.Y)
-
-		log.Printf("Блок перемещен: %s -> (%.0f, %.0f)",
-			d.block.Title, d.block.X, d.block.Y)
-	}
-}
-
-// MouseDown обработка нажатия мыши
-func (d *DraggableBlock) MouseDown(e *desktop.MouseEvent) {
-	if e.Button == desktop.LeftMouseButton {
-		d.isDragging = true
-		d.dragStart = e.AbsolutePosition
-		d.blockStartPos = d.Position() // Сохраняем текущую позицию блока
-		d.selectBlock()                // Выделяем блок при клике
-	}
-}
-
-// MouseUp обработка отпускания мыши
-func (d *DraggableBlock) MouseUp(e *desktop.MouseEvent) {
-	if e.Button == desktop.LeftMouseButton && d.isDragging {
-		d.isDragging = false
-		d.DragEnd()
-	}
-}
-
-// MouseMoved обработка движения мыши при перетаскивании
-func (d *DraggableBlock) MouseMoved(e *desktop.MouseEvent) {
-	if !d.isDragging {
-		return
-	}
-
-	// Вычисляем смещение от начальной позиции мыши
-	deltaX := e.AbsolutePosition.X - d.dragStart.X
-	deltaY := e.AbsolutePosition.Y - d.dragStart.Y
-
-	// Новая позиция блока
-	newPos := fyne.NewPos(
-		d.blockStartPos.X+deltaX,
-		d.blockStartPos.Y+deltaY,
-	)
-
-	// Ограничиваем минимальные координаты
-	if newPos.X < 0 {
-		newPos.X = 0
-	}
-	if newPos.Y < 0 {
-		newPos.Y = 0
-	}
-
-	// Перемещаем блок
-	d.Move(newPos)
-
-	// Обновляем данные блока
-	d.block.X = float64(newPos.X)
-	d.block.Y = float64(newPos.Y)
-	d.block.DragStartPos = newPos
-
-	// Обновляем позиции коннекторов
-	d.updateConnectorPositions()
-
-	// Обновляем соединения
-	d.gui.programPanel.updateConnections()
-}
-
-// Cursor возвращает курсор для блока
-func (d *DraggableBlock) Cursor() desktop.Cursor {
-	return desktop.PointerCursor
-}
-
-// GetBlockPosition возвращает позицию блока для соединений
-func (d *DraggableBlock) GetBlockPosition() fyne.Position {
-	return d.Position()
-}
-
-// GetBlockSize возвращает размер блока
-func (d *DraggableBlock) GetBlockSize() fyne.Size {
-	return d.Size()
 }
 
 // GetTopConnectorPosition возвращает позицию верхнего коннектора
@@ -396,19 +251,11 @@ func hexToByte(hexStr string) (byte, error) {
 	return value, nil
 }
 
-// draggableBlockRenderer рендерер для DraggableBlock
-type draggableBlockRenderer struct {
-	widget  *DraggableBlock
-	objects []fyne.CanvasObject
-}
-
 func (r *draggableBlockRenderer) Layout(size fyne.Size) {
 	// Обновляем размеры всех объектов
 	for _, obj := range r.objects {
 		obj.Resize(size)
 	}
-	// Обновляем позиции коннекторов
-	r.widget.updateConnectorPositions()
 }
 
 func (r *draggableBlockRenderer) MinSize() fyne.Size {
@@ -416,7 +263,6 @@ func (r *draggableBlockRenderer) MinSize() fyne.Size {
 }
 
 func (r *draggableBlockRenderer) Refresh() {
-	r.widget.updateConnectorPositions()
 	for _, obj := range r.objects {
 		obj.Refresh()
 	}

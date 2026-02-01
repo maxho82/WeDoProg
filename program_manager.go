@@ -90,28 +90,124 @@ func NewProgramManager(hubMgr *HubManager, deviceMgr *DeviceManager) *ProgramMan
 	}
 }
 
-// CreateBlock создает новый блок
+// CreateBlock создает новый блок для дракон-схемы
 func (pm *ProgramManager) CreateBlock(blockType BlockType, x, y float64) *ProgramBlock {
+	// Генерируем новый уникальный ID
+	newID := 1
+	for _, block := range pm.program.Blocks {
+		if block.ID >= newID {
+			newID = block.ID + 1
+		}
+	}
+
 	block := &ProgramBlock{
-		ID:           len(pm.program.Blocks) + 1,
-		Type:         blockType,
-		X:            x,
-		Y:            y,
-		DragStartPos: fyne.NewPos(float32(x), float32(y)),
-		Width:        150,
-		Height:       80,
-		Parameters:   make(map[string]interface{}),
-		IsStart:      (blockType == BlockTypeStart),
+		ID:          newID,
+		Type:        blockType,
+		X:           x,
+		Y:           y,
+		Width:       150,
+		Height:      80,
+		Parameters:  make(map[string]interface{}), // Инициализируем здесь!
+		IsStart:     (blockType == BlockTypeStart),
+		NextBlockID: 0,
+		Color:       "#4CAF50", // Значение по умолчанию
 	}
 
 	// Настраиваем блок в зависимости от типа
 	pm.configureBlock(block)
 
-	pm.program.Blocks = append(pm.program.Blocks, block)
-	pm.program.Modified = time.Now()
-
 	log.Printf("Создан блок: %s (ID: %d)", block.Title, block.ID)
+
+	// ВАЖНО: НЕ добавляем блок в программу здесь!
+	// Это сделает programPanel.AddBlock после определения позиции вставки
+
 	return block
+}
+
+// InsertBlock вставляет блок в программу в указанную позицию
+func (pm *ProgramManager) InsertBlock(block *ProgramBlock, afterBlockID int) bool {
+	// Если afterBlockID = 0, добавляем в начало
+	// Если afterBlockID = -1, добавляем в конец
+
+	if afterBlockID == -1 {
+		// Добавляем в конец
+		pm.program.Blocks = append(pm.program.Blocks, block)
+
+		// Находим предыдущий блок (последний не-стоп блок)
+		var prevBlock *ProgramBlock
+		for _, b := range pm.program.Blocks {
+			if b.ID != block.ID && b.Type != BlockTypeStop && b.NextBlockID == 0 {
+				prevBlock = b
+			}
+		}
+
+		if prevBlock != nil {
+			prevBlock.NextBlockID = block.ID
+			pm.AddConnection(prevBlock.ID, block.ID)
+		}
+
+		pm.program.Modified = time.Now()
+		return true
+	}
+
+	if afterBlockID == 0 {
+		// Добавляем в начало
+		// Делаем все существующие блоки не стартовыми
+		for _, b := range pm.program.Blocks {
+			b.IsStart = false
+		}
+
+		block.IsStart = true
+		block.NextBlockID = 0
+
+		// Если есть другие блоки, устанавливаем связь
+		if len(pm.program.Blocks) > 0 {
+			block.NextBlockID = pm.program.Blocks[0].ID
+			pm.AddConnection(block.ID, pm.program.Blocks[0].ID)
+		}
+
+		// Вставляем в начало
+		pm.program.Blocks = append([]*ProgramBlock{block}, pm.program.Blocks...)
+		pm.program.Modified = time.Now()
+		return true
+	}
+
+	// Вставляем после указанного блока
+	var insertIndex = -1
+	for i, b := range pm.program.Blocks {
+		if b.ID == afterBlockID {
+			insertIndex = i + 1
+			break
+		}
+	}
+
+	if insertIndex == -1 {
+		// Блок не найден, добавляем в конец
+		pm.program.Blocks = append(pm.program.Blocks, block)
+		pm.program.Modified = time.Now()
+		return true
+	}
+
+	// Вставляем блок
+	pm.program.Blocks = append(pm.program.Blocks[:insertIndex],
+		append([]*ProgramBlock{block}, pm.program.Blocks[insertIndex:]...)...)
+
+	// Обновляем связи
+	prevBlock, _ := pm.GetBlock(afterBlockID)
+	if prevBlock != nil {
+		block.NextBlockID = prevBlock.NextBlockID
+		prevBlock.NextBlockID = block.ID
+
+		// Обновляем соединения
+		pm.RemoveConnection(afterBlockID)
+		pm.AddConnection(afterBlockID, block.ID)
+		if block.NextBlockID > 0 {
+			pm.AddConnection(block.ID, block.NextBlockID)
+		}
+	}
+
+	pm.program.Modified = time.Now()
+	return true
 }
 
 // configureBlock настраивает блок
@@ -138,9 +234,30 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-			port := block.Parameters["port"].(byte)
-			power := block.Parameters["power"].(int8)
-			duration := block.Parameters["duration"].(uint16)
+
+			// Безопасное получение параметров
+			var port byte
+			var power int8
+			var duration uint16
+
+			if p, ok := block.Parameters["port"].(byte); ok {
+				port = p
+			} else {
+				port = 1
+			}
+
+			if p, ok := block.Parameters["power"].(int8); ok {
+				power = p
+			} else {
+				power = 50
+			}
+
+			if d, ok := block.Parameters["duration"].(uint16); ok {
+				duration = d
+			} else {
+				duration = 1000
+			}
+
 			return pm.deviceMgr.SetMotorPowerAndWait(port, power, duration)
 		}
 
@@ -442,7 +559,7 @@ func (pm *ProgramManager) ClearProgram() {
 	log.Println("Программа очищена")
 }
 
-// GetProgram возвращает текущую программу
+// GetProgram возвращает текущую программу.
 func (pm *ProgramManager) GetProgram() *Program {
 	return pm.program
 }
@@ -510,50 +627,58 @@ func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
 	return false
 }
 
-// RemoveBlock полностью удаляет блок
+// RemoveBlock полностью удаляет блок из программы
 func (pm *ProgramManager) RemoveBlock(blockID int) bool {
-	var blockToRemove *ProgramBlock
-	var newBlocks []*ProgramBlock
+	log.Printf("Начинаем удаление блока %d из программы", blockID)
 
-	for _, block := range pm.program.Blocks {
-		if block.ID != blockID {
-			newBlocks = append(newBlocks, block)
-		} else {
+	// Находим блок для удаления
+	var blockToRemove *ProgramBlock
+	var removeIndex int = -1
+
+	for i, block := range pm.program.Blocks {
+		if block.ID == blockID {
 			blockToRemove = block
+			removeIndex = i
+			break
 		}
 	}
 
 	if blockToRemove == nil {
+		log.Printf("Блок %d не найден в программе", blockID)
 		return false
 	}
 
-	pm.program.Blocks = newBlocks
+	// Удаляем блок из списка
+	if removeIndex == 0 {
+		pm.program.Blocks = pm.program.Blocks[1:]
+	} else if removeIndex == len(pm.program.Blocks)-1 {
+		pm.program.Blocks = pm.program.Blocks[:removeIndex]
+	} else {
+		pm.program.Blocks = append(
+			pm.program.Blocks[:removeIndex],
+			pm.program.Blocks[removeIndex+1:]...,
+		)
+	}
 
 	// Удаляем все соединения, связанные с блоком
 	var newConnections []*Connection
 	for _, conn := range pm.program.Connections {
 		if conn.FromBlockID != blockID && conn.ToBlockID != blockID {
 			newConnections = append(newConnections, conn)
-		} else {
-			// Если соединение вело к удаляемому блоку, сбрасываем NextBlockID
-			if conn.FromBlockID != blockID {
-				for _, block := range newBlocks {
-					if block.ID == conn.FromBlockID {
-						block.NextBlockID = 0
-					}
-				}
-			}
 		}
 	}
 	pm.program.Connections = newConnections
 
-	// Если удаляемый блок был начальным, делаем первый блок начальным
-	if blockToRemove.IsStart && len(newBlocks) > 0 {
-		newBlocks[0].IsStart = true
+	// Обновляем связи в оставшихся блоках
+	pm.rebuildConnections()
+
+	// Если удаляемый блок был начальным и остались другие блоки
+	if blockToRemove.IsStart && len(pm.program.Blocks) > 0 {
+		pm.program.Blocks[0].IsStart = true
 	}
 
 	pm.program.Modified = time.Now()
-	log.Printf("Блок %d полностью удален из программы", blockID)
+	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(pm.program.Blocks))
 	return true
 }
 
@@ -562,15 +687,90 @@ func (pm *ProgramManager) GetProgramState() ProgramState {
 	return pm.currentState
 }
 
-// UpdateBlockPosition обновляет позицию блока
-func (pm *ProgramManager) UpdateBlockPosition(blockID int, x, y float64) bool {
+// GetBlockBeforeStop возвращает блок, который идет перед блоком "Стоп"
+func (pm *ProgramManager) GetBlockBeforeStop() (*ProgramBlock, bool) {
+	// Находим блок "Стоп"
+	var stopBlock *ProgramBlock
 	for _, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			block.X = x
-			block.Y = y
-			pm.program.Modified = time.Now()
-			return true
+		if block.Type == BlockTypeStop {
+			stopBlock = block
+			break
 		}
 	}
-	return false
+
+	if stopBlock == nil {
+		return nil, false
+	}
+
+	// Находим блок, который ссылается на блок "Стоп"
+	for _, block := range pm.program.Blocks {
+		if block.NextBlockID == stopBlock.ID {
+			return block, true
+		}
+	}
+
+	return nil, false
+}
+
+// GetBlocksInOrder возвращает блоки в порядке их выполнения
+func (pm *ProgramManager) GetBlocksInOrder() []*ProgramBlock {
+	var ordered []*ProgramBlock
+	visited := make(map[int]bool)
+
+	// Находим стартовый блок
+	var current *ProgramBlock
+	for _, block := range pm.program.Blocks {
+		if block.IsStart {
+			current = block
+			break
+		}
+	}
+
+	// Если нет стартового блока, берем первый
+	if current == nil && len(pm.program.Blocks) > 0 {
+		current = pm.program.Blocks[0]
+	}
+
+	// Проходим по цепочке
+	for current != nil && !visited[current.ID] {
+		visited[current.ID] = true
+		ordered = append(ordered, current)
+
+		if current.NextBlockID == 0 {
+			break
+		}
+
+		next, exists := pm.GetBlock(current.NextBlockID)
+		if !exists {
+			break
+		}
+		current = next
+	}
+
+	return ordered
+}
+
+// rebuildConnections перестраивает все связи после удаления блока
+func (pm *ProgramManager) rebuildConnections() {
+	// Очищаем все существующие связи
+	pm.program.Connections = make([]*Connection, 0)
+
+	// Очищаем NextBlockID у всех блоков
+	for _, block := range pm.program.Blocks {
+		block.NextBlockID = 0
+	}
+
+	// Создаем новые связи по порядку
+	for i := 0; i < len(pm.program.Blocks)-1; i++ {
+		currentBlock := pm.program.Blocks[i]
+		nextBlock := pm.program.Blocks[i+1]
+
+		currentBlock.NextBlockID = nextBlock.ID
+		pm.program.Connections = append(pm.program.Connections, &Connection{
+			FromBlockID: currentBlock.ID,
+			ToBlockID:   nextBlock.ID,
+		})
+	}
+
+	log.Printf("Связи перестроены. Создано %d соединений", len(pm.program.Connections))
 }
