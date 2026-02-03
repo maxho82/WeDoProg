@@ -236,26 +236,29 @@ func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
 	}
 
 	// Подсчитываем количество блоков в цикле (включая начало и конец)
-	loopBlocks, _ := gui.programMgr.GetLoopBlocks(loopStartID)
+	loopBlocks, found := gui.programMgr.GetLoopBlocks(loopStartID)
+	if !found {
+		dialog.ShowError(fmt.Errorf("Не удалось найти блоки цикла"), gui.window)
+		return
+	}
+
 	blockCount := len(loopBlocks)
 
 	dialog.ShowConfirm("Удалить цикл",
-		fmt.Sprintf("Вы уверены, что хотите удалить весь цикл?\nУдалено будет %d блоков (включая тело цикла).", blockCount),
+		fmt.Sprintf("Вы уверены, что хотите удалить весь цикл?\nУдалено будет %d блоков (включая начало и конец цикла).", blockCount),
 		func(confirmed bool) {
 			if confirmed {
 				log.Printf("Начинаем удаление цикла (начало: %d, конец: %d)", loopStartID, loopEndID)
 
-				// Удаляем все блоки цикла начиная с конца (чтобы не нарушать индексы)
-				for i := len(loopBlocks) - 1; i >= 0; i-- {
-					block := loopBlocks[i]
-					gui.programPanel.RemoveBlock(block.ID)
-				}
+				// Удаляем все блоки цикла с помощью нового метода
+				gui.programPanel.RemoveLoopBlocks(loopBlocks)
 
 				// Очищаем панель свойств
 				gui.clearPropertiesPanel()
 
 				// Сбрасываем выделение
 				gui.selectedBlock = nil
+				gui.programPanel.SetSelectedBlock(nil)
 
 				log.Printf("Цикл удален (начало: %d, конец: %d)", loopStartID, loopEndID)
 

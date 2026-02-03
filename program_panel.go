@@ -350,8 +350,8 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 
 	// Проверяем, является ли блок частью цикла
 	if blockToRemove.Type == BlockTypeLoopStart || blockToRemove.Type == BlockTypeLoopEnd {
-		// Удаление цикла обрабатывается в main_gui.go через deleteLoopWithConfirmation
-		log.Printf("Блок цикла '%s' (ID: %d) требует подтверждения для удаления", blockToRemove.Title, blockID)
+		// Для блоков цикла вызываем специальную функцию в GUI
+		p.gui.deleteLoopWithConfirmation(blockID)
 		return
 	}
 
@@ -413,6 +413,65 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 	p.content.Refresh()
 
 	log.Printf("Блок %d удален с холста. Осталось блоков: %d", blockID, len(p.programMgr.program.Blocks))
+}
+
+// RemoveBlockInternal - внутренний метод для удаления блока без проверок (используется при удалении циклов)
+func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
+	log.Printf("Внутреннее удаление блока %d", blockID)
+
+	// Находим блок для удаления
+	var blockToRemove *ProgramBlock
+	var removeIndex = -1
+
+	for i, block := range p.programMgr.program.Blocks {
+		if block.ID == blockID {
+			blockToRemove = block
+			removeIndex = i
+			break
+		}
+	}
+
+	if blockToRemove == nil {
+		log.Printf("Блок %d не найден в программе", blockID)
+		return
+	}
+
+	// Удаляем блок из программы
+	if removeIndex == 0 {
+		p.programMgr.program.Blocks = p.programMgr.program.Blocks[1:]
+	} else if removeIndex == len(p.programMgr.program.Blocks)-1 {
+		p.programMgr.program.Blocks = p.programMgr.program.Blocks[:removeIndex]
+	} else {
+		p.programMgr.program.Blocks = append(
+			p.programMgr.program.Blocks[:removeIndex],
+			p.programMgr.program.Blocks[removeIndex+1:]...,
+		)
+	}
+
+	// Удаляем виджет блока
+	if blockWidget, exists := p.blockWidgets[blockID]; exists {
+		// Ищем виджет в контейнере и удаляем его
+		for i, obj := range p.content.Objects {
+			if obj == blockWidget {
+				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
+				break
+			}
+		}
+		// Удаляем из карты виджетов
+		delete(p.blockWidgets, blockID)
+	}
+
+	// Удаляем связанные соединения
+	p.removeConnectionsForBlock(blockID)
+
+	// Если удалили выбранный блок, сбрасываем выделение
+	if p.selectedBlock != nil && p.selectedBlock.ID == blockID {
+		p.selectedBlock = nil
+		p.gui.selectedBlock = nil
+		p.ResetHighlight()
+	}
+
+	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(p.programMgr.program.Blocks))
 }
 
 // removeConnectionsForBlock удаляет соединения для блока
@@ -591,5 +650,24 @@ func (p *ProgramPanel) highlightBlockAsExecuting(block *ProgramBlock) {
 
 	// Также подсвечиваем соответствующую связь
 	p.HighlightConnections(block)
+	p.content.Refresh()
+}
+
+// Удаляем все блоки цикла (включая начало и конец)
+func (p *ProgramPanel) RemoveLoopBlocks(loopBlocks []*ProgramBlock) {
+	log.Printf("Удаление всех блоков цикла (количество: %d)", len(loopBlocks))
+
+	// Удаляем блоки начиная с конца (чтобы не нарушать индексы)
+	for i := len(loopBlocks) - 1; i >= 0; i-- {
+		block := loopBlocks[i]
+		p.RemoveBlockInternal(block.ID)
+	}
+
+	// Пересчитываем позиции оставшихся блоков
+	p.repositionAllBlocks()
+
+	// Обновляем все связи
+	p.updateAllConnections()
+
 	p.content.Refresh()
 }
