@@ -60,25 +60,57 @@ func (d *DraggableBlock) createContent() {
 		blockColor = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
 	}
 
-	// Для блоков "Начать" и "Стоп" используем другую форму (овал)
+	// Определяем форму блока в зависимости от типа
 	var cornerRadius float32 = 8
+	var shape string = "rectangle" // По умолчанию прямоугольник
 
+	// Для блоков "Начать" и "Стоп" используем овальную форму
 	if d.block.Type == BlockTypeStart || d.block.Type == BlockTypeStop {
-		// Для овальной формы делаем радиус скругления равным половине высоты
+		shape = "oval"
 		cornerRadius = float32(d.block.Height) / 2
+	} else if d.block.Type == BlockTypeLoopStart || d.block.Type == BlockTypeLoopEnd {
+		// Для блоков цикла используем шестиугольную форму
+		shape = "hexagon"
 	}
 
 	// Фон блока
-	bg := canvas.NewRectangle(blockColor)
-	bg.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
-	bg.CornerRadius = cornerRadius
+	var bg fyne.CanvasObject
+	if shape == "oval" {
+		// Овальная форма для начала и конца программы
+		rect := canvas.NewRectangle(blockColor)
+		rect.CornerRadius = cornerRadius
+		rect.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
+		bg = rect
+	} else if shape == "hexagon" {
+		// Шестиугольная форма для блоков цикла
+		bg = createHexagon(blockColor, float32(d.block.Width), float32(d.block.Height))
+	} else {
+		// Прямоугольная форма по умолчанию
+		rect := canvas.NewRectangle(blockColor)
+		rect.CornerRadius = cornerRadius
+		rect.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
+		bg = rect
+	}
 
 	// Добавляем выделение при выборе (желтая рамка 5 пикселей)
-	d.selectionBorder = canvas.NewRectangle(color.Transparent)
-	d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
-	d.selectionBorder.CornerRadius = cornerRadius + 2
-	d.selectionBorder.StrokeColor = color.Transparent
-	d.selectionBorder.StrokeWidth = 5 // Толщина рамки выделения
+	if shape == "oval" {
+		d.selectionBorder = canvas.NewRectangle(color.Transparent)
+		d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
+		d.selectionBorder.CornerRadius = cornerRadius + 2
+		d.selectionBorder.StrokeColor = color.Transparent
+		d.selectionBorder.StrokeWidth = 5 // Толщина рамки выделения
+	} else if shape == "hexagon" {
+		// Для шестиугольника создаем специальную рамку
+		d.selectionBorder = createHexagon(color.Transparent, float32(d.block.Width)+10, float32(d.block.Height)+10)
+		d.selectionBorder.StrokeColor = color.Transparent
+		d.selectionBorder.StrokeWidth = 5
+	} else {
+		d.selectionBorder = canvas.NewRectangle(color.Transparent)
+		d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
+		d.selectionBorder.CornerRadius = cornerRadius + 2
+		d.selectionBorder.StrokeColor = color.Transparent
+		d.selectionBorder.StrokeWidth = 5
+	}
 
 	// Иконка в зависимости от типа блока
 	var iconText string
@@ -87,6 +119,10 @@ func (d *DraggableBlock) createContent() {
 		iconText = "▶"
 	case BlockTypeStop:
 		iconText = "■"
+	case BlockTypeLoopStart:
+		iconText = "↻"
+	case BlockTypeLoopEnd:
+		iconText = "⏹"
 	default:
 		iconText = "◼"
 	}
@@ -112,7 +148,7 @@ func (d *DraggableBlock) createContent() {
 		container.NewCenter(desc),
 	)
 
-	// Создаем коннекторы (точки соединения) - для блоков Начать и Стоп только один коннектор
+	// Создаем коннекторы (точки соединения)
 	d.connectorTop = canvas.NewCircle(color.Transparent)
 	d.connectorTop.StrokeWidth = 0
 	d.connectorTop.Resize(fyne.NewSize(1, 1))
@@ -128,11 +164,24 @@ func (d *DraggableBlock) createContent() {
 	)
 
 	// Рамка выделения выполнения (зеленая)
-	d.executingBorder = canvas.NewRectangle(color.Transparent)
-	d.executingBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+12, float32(d.block.Height)+12))
-	d.executingBorder.CornerRadius = cornerRadius + 3
-	d.executingBorder.StrokeColor = color.Transparent
-	d.executingBorder.StrokeWidth = 6 // Толстая рамка для выполнения
+	if shape == "oval" {
+		d.executingBorder = canvas.NewRectangle(color.Transparent)
+		d.executingBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+12, float32(d.block.Height)+12))
+		d.executingBorder.CornerRadius = cornerRadius + 3
+		d.executingBorder.StrokeColor = color.Transparent
+		d.executingBorder.StrokeWidth = 6 // Толстая рамка для выполнения
+	} else if shape == "hexagon" {
+		// Для шестиугольника создаем специальную рамку
+		d.executingBorder = createHexagon(color.Transparent, float32(d.block.Width)+12, float32(d.block.Height)+12)
+		d.executingBorder.StrokeColor = color.Transparent
+		d.executingBorder.StrokeWidth = 6
+	} else {
+		d.executingBorder = canvas.NewRectangle(color.Transparent)
+		d.executingBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+12, float32(d.block.Height)+12))
+		d.executingBorder.CornerRadius = cornerRadius + 3
+		d.executingBorder.StrokeColor = color.Transparent
+		d.executingBorder.StrokeWidth = 6
+	}
 
 	// ВАЖНО: Порядок элементов в Stack имеет значение!
 	// 1. Фон (bg)
@@ -146,6 +195,14 @@ func (d *DraggableBlock) createContent() {
 		d.executingBorder,
 		connectors,
 	)
+}
+
+// createHexagon создает шестиугольную форму для блоков цикла
+func createHexagon(fillColor color.Color, width, height float32) *canvas.Rectangle {
+	rect := canvas.NewRectangle(fillColor)
+	rect.SetMinSize(fyne.NewSize(width, height))
+	rect.CornerRadius = 8 // Небольшое скругление углов
+	return rect
 }
 
 // CreateRenderer создает рендерер виджета
@@ -170,10 +227,8 @@ func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
 	d.gui.selectedBlock = d.block
 	d.gui.programPanel.SetSelectedBlock(d.block)
 
-	// Показываем свойства блока (кроме блока "Стоп")
-	if d.block.Type != BlockTypeStop {
-		d.gui.showBlockProperties(d.block)
-	}
+	// Показываем свойства блока
+	d.gui.showBlockProperties(d.block)
 }
 
 // TappedSecondary обработка правого клика по блоку
@@ -183,7 +238,22 @@ func (d *DraggableBlock) TappedSecondary(e *fyne.PointEvent) {
 		return
 	}
 
-	// Создаем контекстное меню
+	// Для блоков цикла используем специальное меню
+	if d.block.Type == BlockTypeLoopStart || d.block.Type == BlockTypeLoopEnd {
+		menu := fyne.NewMenu("",
+			fyne.NewMenuItem("Удалить цикл", func() {
+				d.gui.deleteLoopWithConfirmation(d.block.ID)
+			}),
+			fyne.NewMenuItemSeparator(),
+			fyne.NewMenuItem("Свойства", func() {
+				d.gui.showBlockProperties(d.block)
+			}),
+		)
+		widget.ShowPopUpMenuAtPosition(menu, d.gui.window.Canvas(), e.AbsolutePosition)
+		return
+	}
+
+	// Создаем контекстное меню для обычных блоков
 	menu := fyne.NewMenu("",
 		fyne.NewMenuItem("Удалить", func() {
 			d.gui.deleteSelectedBlock()

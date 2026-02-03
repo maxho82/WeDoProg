@@ -81,3 +81,37 @@ func (hm *HubManager) GetConnectedDevices() []*Device {
 	}
 	return devices
 }
+
+// GetBlockTypeName возвращает имя типа блока
+func GetBlockTypeName(blockType BlockType) string {
+	switch blockType {
+	case BlockTypeStart:
+		return "Начать"
+	case BlockTypeMotor:
+		return "Мотор"
+	case BlockTypeLED:
+		return "Светодиод"
+	case BlockTypeWait:
+		return "Ждать"
+	case BlockTypeLoopStart:
+		return "ДЛЯ (начало цикла)"
+	case BlockTypeLoopEnd:
+		return "КЦ (конец цикла)"
+	case BlockTypeCondition:
+		return "Условие"
+	case BlockTypeTiltSensor:
+		return "Датчик наклона"
+	case BlockTypeDistanceSensor:
+		return "Датчик расстояния"
+	case BlockTypeSound:
+		return "Звук"
+	case BlockTypeVoltageSensor:
+		return "Датчик напряжения"
+	case BlockTypeCurrentSensor:
+		return "Датчик тока"
+	case BlockTypeStop:
+		return "Стоп"
+	default:
+		return fmt.Sprintf("Неизвестный (%d)", blockType)
+	}
+}

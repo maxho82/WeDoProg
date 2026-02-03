@@ -175,6 +175,12 @@ func (gui *MainGUI) deleteSelectedBlock() {
 	blockID := gui.selectedBlock.ID
 	blockTitle := gui.selectedBlock.Title
 
+	// Проверяем, является ли блок частью цикла
+	if gui.selectedBlock.Type == BlockTypeLoopStart || gui.selectedBlock.Type == BlockTypeLoopEnd {
+		gui.deleteLoopWithConfirmation(blockID)
+		return
+	}
+
 	dialog.ShowConfirm("Удалить блок",
 		fmt.Sprintf("Удалить блок '%s' (ID: %d)?", blockTitle, blockID),
 		func(confirmed bool) {
@@ -191,6 +197,67 @@ func (gui *MainGUI) deleteSelectedBlock() {
 				gui.selectedBlock = nil
 
 				log.Printf("Блок %d удален", blockID)
+
+				// Обновляем состояние кнопок
+				gui.updateToolbarState()
+			}
+		}, gui.window)
+}
+
+// deleteLoopWithConfirmation удаляет весь цикл с подтверждением
+func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
+	var loopStartID, loopEndID int
+	var loopStartBlock, loopEndBlock *ProgramBlock
+
+	// Определяем, какой блок цикла удаляется
+	if block, exists := gui.programMgr.GetBlock(blockID); exists {
+		if block.Type == BlockTypeLoopStart {
+			loopStartID = blockID
+			loopStartBlock = block
+			// Находим конец цикла
+			if loopEndIDVal, ok := block.Parameters["loopEndID"].(int); ok && loopEndIDVal > 0 {
+				loopEndID = loopEndIDVal
+				loopEndBlock, _ = gui.programMgr.GetBlock(loopEndID)
+			}
+		} else if block.Type == BlockTypeLoopEnd {
+			loopEndID = blockID
+			loopEndBlock = block
+			// Находим начало цикла
+			if loopStartIDVal, ok := block.Parameters["loopStartID"].(int); ok && loopStartIDVal > 0 {
+				loopStartID = loopStartIDVal
+				loopStartBlock, _ = gui.programMgr.GetBlock(loopStartID)
+			}
+		}
+	}
+
+	if loopStartBlock == nil || loopEndBlock == nil {
+		dialog.ShowError(fmt.Errorf("Не удалось найти связанный блок цикла"), gui.window)
+		return
+	}
+
+	// Подсчитываем количество блоков в цикле (включая начало и конец)
+	loopBlocks, _ := gui.programMgr.GetLoopBlocks(loopStartID)
+	blockCount := len(loopBlocks)
+
+	dialog.ShowConfirm("Удалить цикл",
+		fmt.Sprintf("Вы уверены, что хотите удалить весь цикл?\nУдалено будет %d блоков (включая тело цикла).", blockCount),
+		func(confirmed bool) {
+			if confirmed {
+				log.Printf("Начинаем удаление цикла (начало: %d, конец: %d)", loopStartID, loopEndID)
+
+				// Удаляем все блоки цикла начиная с конца (чтобы не нарушать индексы)
+				for i := len(loopBlocks) - 1; i >= 0; i-- {
+					block := loopBlocks[i]
+					gui.programPanel.RemoveBlock(block.ID)
+				}
+
+				// Очищаем панель свойств
+				gui.clearPropertiesPanel()
+
+				// Сбрасываем выделение
+				gui.selectedBlock = nil
+
+				log.Printf("Цикл удален (начало: %d, конец: %d)", loopStartID, loopEndID)
 
 				// Обновляем состояние кнопок
 				gui.updateToolbarState()
@@ -245,15 +312,15 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	// Инициализируем карту кнопок
 	gui.blockButtons = make(map[BlockType]*widget.Button)
 
-	// Категории блоков
+	// Категории блоков (ИЗМЕНЕНО: "Логика" после "Управление")
 	categories := []struct {
 		name   string
 		blocks []BlockType
 	}{
 		{"Управление", []BlockType{BlockTypeStart, BlockTypeStop}},
+		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoopStart, BlockTypeCondition}},
 		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound}},
 		{"Датчики", []BlockType{BlockTypeTiltSensor, BlockTypeDistanceSensor, BlockTypeVoltageSensor, BlockTypeCurrentSensor}},
-		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoop, BlockTypeCondition}},
 	}
 
 	for _, category := range categories {
@@ -266,30 +333,41 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 		// Блоки в категории
 		for _, blockType := range category.blocks {
 			blockName := gui.getBlockName(blockType)
-			blockButton := widget.NewButton(blockName, func(bt BlockType) func() {
-				return func() {
-					// Создаем блок (позиция будет вычислена в programPanel)
-					block := gui.programMgr.CreateBlock(bt, 0, 0)
 
-					// Добавляем блок на панель программирования
-					gui.programPanel.AddBlock(block)
-
-					// Обновляем состояние кнопок
-					gui.updateBlockButtonsState()
-					gui.updateToolbarState()
-
-					log.Printf("Добавлен новый блок: %s (ID: %d)", block.Title, block.ID)
-				}
-			}(blockType))
-
-			blockButton.Importance = widget.LowImportance
-
-			// Сохраняем кнопку в карту (кроме блока "Начать")
-			if blockType != BlockTypeStart && blockType != BlockTypeStop {
+			// Обработчик для блока цикла (создаем два блока)
+			if blockType == BlockTypeLoopStart {
+				blockButton := widget.NewButton(blockName, func() {
+					gui.createLoopBlocks()
+				})
+				blockButton.Importance = widget.LowImportance
 				gui.blockButtons[blockType] = blockButton
-			}
+				blocksContainer.Add(blockButton)
+			} else {
+				blockButton := widget.NewButton(blockName, func(bt BlockType) func() {
+					return func() {
+						// Создаем блок (позиция будет вычислена в programPanel)
+						block := gui.programMgr.CreateBlock(bt, 0, 0)
 
-			blocksContainer.Add(blockButton)
+						// Добавляем блок на панель программирования
+						gui.programPanel.AddBlock(block)
+
+						// Обновляем состояние кнопок
+						gui.updateBlockButtonsState()
+						gui.updateToolbarState()
+
+						log.Printf("Добавлен новый блок: %s (ID: %d)", block.Title, block.ID)
+					}
+				}(blockType))
+
+				blockButton.Importance = widget.LowImportance
+
+				// Сохраняем кнопку в карту (кроме блока "Начать")
+				if blockType != BlockTypeStart && blockType != BlockTypeStop {
+					gui.blockButtons[blockType] = blockButton
+				}
+
+				blocksContainer.Add(blockButton)
+			}
 		}
 
 		blocksContainer.Add(widget.NewSeparator())
@@ -298,6 +376,41 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	scroll := container.NewVScroll(container.NewPadded(blocksContainer))
 	scroll.SetMinSize(fyne.NewSize(220, 400))
 	return scroll
+}
+
+// createLoopBlocks создает два блока для цикла (начало и конец)
+func (gui *MainGUI) createLoopBlocks() {
+	log.Println("Создание цикла (начало и конец)...")
+
+	// Создаем блок начала цикла
+	loopStartBlock := gui.programMgr.CreateBlock(BlockTypeLoopStart, 0, 0)
+
+	// Добавляем блок начала цикла на панель
+	gui.programPanel.AddBlock(loopStartBlock)
+
+	// Теперь добавляем блок конца цикла
+	// Он должен быть добавлен после блока начала цикла
+	gui.programPanel.SetSelectedBlock(loopStartBlock)
+
+	// Создаем блок конца цикла
+	loopEndBlock := gui.programMgr.CreateBlock(BlockTypeLoopEnd, 0, 0)
+
+	// Устанавливаем связь между началом и концом цикла
+	loopStartBlock.Parameters["loopEndID"] = loopEndBlock.ID
+	loopEndBlock.Parameters["loopStartID"] = loopStartBlock.ID
+
+	// Добавляем блок конца цикла на панель
+	gui.programPanel.AddBlock(loopEndBlock)
+
+	// Выделяем начало цикла
+	gui.programPanel.SetSelectedBlock(loopStartBlock)
+	gui.selectedBlock = loopStartBlock
+
+	// Обновляем состояние кнопок
+	gui.updateBlockButtonsState()
+	gui.updateToolbarState()
+
+	log.Printf("Создан цикл: начало (ID: %d) -> конец (ID: %d)", loopStartBlock.ID, loopEndBlock.ID)
 }
 
 // updateBlockButtonsState обновляет состояние кнопок блоков
@@ -350,8 +463,10 @@ func (gui *MainGUI) getBlockName(blockType BlockType) string {
 		return "Светодиод"
 	case BlockTypeWait:
 		return "Ждать"
-	case BlockTypeLoop:
-		return "Повторять"
+	case BlockTypeLoopStart:
+		return "ДЛЯ (цикл)"
+	case BlockTypeLoopEnd:
+		return "КЦ (цикл)"
 	case BlockTypeCondition:
 		return "Условие"
 	case BlockTypeTiltSensor:
@@ -740,7 +855,8 @@ func (gui *MainGUI) updateAvailableBlocks() {
 	// Всегда доступны базовые блоки
 	gui.availableBlocks[BlockTypeStart] = true
 	gui.availableBlocks[BlockTypeWait] = true
-	gui.availableBlocks[BlockTypeLoop] = true
+	gui.availableBlocks[BlockTypeLoopStart] = true
+	gui.availableBlocks[BlockTypeLoopEnd] = true
 	gui.availableBlocks[BlockTypeStop] = true
 	gui.availableBlocks[BlockTypeCondition] = true
 

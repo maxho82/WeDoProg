@@ -60,8 +60,12 @@ func (e *BlockEditor) buildUI() *fyne.Container {
 		e.addLEDControls(mainContainer)
 	case BlockTypeWait:
 		e.addWaitControls(mainContainer)
-	case BlockTypeLoop:
-		e.addLoopControls(mainContainer)
+	case BlockTypeLoopStart:
+		e.addLoopStartControls(mainContainer)
+	case BlockTypeLoopEnd:
+		e.addLoopEndControls(mainContainer)
+	case BlockTypeCondition:
+		e.addConditionControls(mainContainer)
 	case BlockTypeTiltSensor:
 		e.addTiltSensorControls(mainContainer)
 	case BlockTypeDistanceSensor:
@@ -127,9 +131,8 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
-	// Контейнер для ползунка мощности - ИСПРАВЛЕНО: не вызываем SetMinSize
+	// Контейнер для ползунка мощности
 	powerContainer := container.NewBorder(nil, nil, nil, powerValueLabel, powerSlider)
-	// УБРАНО: powerContainer.SetMinSize(fyne.NewSize(250, 40))
 
 	// Длительность
 	durationLabelWidget := widget.NewLabel("Длительность (мс, 0 = бесконечно):")
@@ -381,8 +384,9 @@ func (e *BlockEditor) addWaitControls(cont *fyne.Container) {
 	cont.Add(durationContainer)
 }
 
-// addLoopControls добавляет элементы управления для цикла
-func (e *BlockEditor) addLoopControls(cont *fyne.Container) {
+// addLoopStartControls добавляет элементы управления для начала цикла
+func (e *BlockEditor) addLoopStartControls(cont *fyne.Container) {
+	// Тип цикла
 	loopTypeLabel := widget.NewLabel("Тип цикла:")
 	loopTypeSelect := widget.NewSelect([]string{"Определенное число раз", "Бесконечно"}, func(selected string) {
 		e.block.Parameters["forever"] = (selected == "Бесконечно")
@@ -396,11 +400,26 @@ func (e *BlockEditor) addLoopControls(cont *fyne.Container) {
 		e.block.Parameters["forever"] = false
 	}
 
+	// Количество повторений (только если не бесконечный цикл)
 	countLabel := widget.NewLabel("Количество повторений:")
 	countSlider := widget.NewSlider(1, 100)
 	countSlider.Step = 1
 	countValueLabel := widget.NewLabel("")
 
+	// Обновляем видимость элементов в зависимости от типа цикла
+	updateVisibility := func() {
+		if forever, ok := e.block.Parameters["forever"].(bool); ok && forever {
+			countLabel.Hide()
+			countSlider.Hide()
+			countValueLabel.Hide()
+		} else {
+			countLabel.Show()
+			countSlider.Show()
+			countValueLabel.Show()
+		}
+	}
+
+	// Инициализируем значения
 	if count, ok := e.block.Parameters["count"].(int); ok {
 		countSlider.Value = float64(count)
 		countValueLabel.SetText(fmt.Sprintf("%d раз", count))
@@ -416,13 +435,68 @@ func (e *BlockEditor) addLoopControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
+	// Обработчик изменения типа цикла
+	loopTypeSelect.OnChanged = func(selected string) {
+		e.block.Parameters["forever"] = (selected == "Бесконечно")
+		updateVisibility()
+		e.notifyChange()
+	}
+
 	// Контейнер для ползунка
 	countContainer := container.NewBorder(nil, nil, nil, countValueLabel, countSlider)
+
+	// Информация о цикле
+	infoLabel := widget.NewLabel("Это блок начала цикла 'ДЛЯ'.\nБлок конца цикла 'КЦ' создается автоматически.\nМежду ними можно добавлять другие блоки.")
+	infoLabel.Wrapping = fyne.TextWrapWord
+
+	// Находим ID конца цикла, если есть
+	var loopEndID int
+	if loopEndIDVal, ok := e.block.Parameters["loopEndID"].(int); ok {
+		loopEndID = loopEndIDVal
+	}
+
+	// Информация о связанном блоке
+	if loopEndID > 0 {
+		connectionLabel := widget.NewLabel(fmt.Sprintf("Связан с блоком 'КЦ' (ID: %d)", loopEndID))
+		cont.Add(connectionLabel)
+	}
 
 	cont.Add(loopTypeLabel)
 	cont.Add(loopTypeSelect)
 	cont.Add(countLabel)
 	cont.Add(countContainer)
+	cont.Add(infoLabel)
+
+	// Инициализируем видимость
+	updateVisibility()
+}
+
+// addLoopEndControls добавляет элементы управления для конца цикла
+func (e *BlockEditor) addLoopEndControls(cont *fyne.Container) {
+	// Информация о блоке
+	infoLabel := widget.NewLabel("Это блок конца цикла 'КЦ'.\nОн автоматически создается вместе с блоком 'ДЛЯ'.\nУдаление этого блока удалит весь цикл.")
+	infoLabel.Wrapping = fyne.TextWrapWord
+
+	// Находим ID начала цикла, если есть
+	var loopStartID int
+	if loopStartIDVal, ok := e.block.Parameters["loopStartID"].(int); ok {
+		loopStartID = loopStartIDVal
+	}
+
+	// Информация о связанном блоке
+	if loopStartID > 0 {
+		connectionLabel := widget.NewLabel(fmt.Sprintf("Связан с блоком 'ДЛЯ' (ID: %d)", loopStartID))
+		cont.Add(connectionLabel)
+	}
+
+	cont.Add(infoLabel)
+}
+
+// addConditionControls добавляет элементы управления для условного оператора
+func (e *BlockEditor) addConditionControls(cont *fyne.Container) {
+	infoLabel := widget.NewLabel("Блок условия.\nВ будущих версиях здесь будут настройки условий.")
+	infoLabel.Wrapping = fyne.TextWrapWord
+	cont.Add(infoLabel)
 }
 
 // addTiltSensorControls добавляет элементы управления для датчика наклона
@@ -542,8 +616,8 @@ func (e *BlockEditor) addSoundControls(cont *fyne.Container) {
 			e.block.Parameters["port"] = byte(1)
 		} else {
 			e.block.Parameters["port"] = byte(2)
+			e.notifyChange()
 		}
-		e.notifyChange()
 	})
 
 	if port, ok := e.block.Parameters["port"].(byte); ok && port == 2 {

@@ -9,7 +9,7 @@ import (
 	"fyne.io/fyne/v2/container"
 )
 
-// ProgramPanel панель визуального программирования (дракон-схема)
+// ProgramPanel панель визуального программирования (дракон-схемы)
 type ProgramPanel struct {
 	gui           *MainGUI
 	scroll        *container.Scroll
@@ -160,19 +160,50 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 		return len(p.programMgr.program.Blocks)
 	}
 
-	// Если выделен блок "Стоп", вставляем перед ним
-	if p.selectedBlock.Type == BlockTypeStop {
+	// Определяем логику вставки в зависимости от типа выбранного блока
+	switch p.selectedBlock.Type {
+	case BlockTypeLoopStart:
+		// Если выбран блок начала цикла, вставляем после него (в тело цикла)
+		for i, block := range p.programMgr.program.Blocks {
+			if block.ID == p.selectedBlock.ID {
+				// Находим конец цикла, если есть
+				loopEndID, found := p.programMgr.FindLoopEndID(block.ID)
+				if found {
+					// Ищем индекс конца цикла
+					for j, b := range p.programMgr.program.Blocks {
+						if b.ID == loopEndID {
+							// Вставляем перед концом цикла
+							return j
+						}
+					}
+				}
+				// Если конца цикла нет, вставляем после начала
+				return i + 1
+			}
+		}
+
+	case BlockTypeLoopEnd:
+		// Если выбран блок конца цикла, вставляем после него (после цикла)
+		for i, block := range p.programMgr.program.Blocks {
+			if block.ID == p.selectedBlock.ID {
+				return i + 1
+			}
+		}
+
+	case BlockTypeStop:
+		// Если выбран блок "Стоп", вставляем перед ним
 		for i, block := range p.programMgr.program.Blocks {
 			if block.ID == p.selectedBlock.ID {
 				return i
 			}
 		}
-	}
 
-	// Иначе вставляем после выделенного блока
-	for i, block := range p.programMgr.program.Blocks {
-		if block.ID == p.selectedBlock.ID {
-			return i + 1
+	default:
+		// Для остальных блоков вставляем после выбранного
+		for i, block := range p.programMgr.program.Blocks {
+			if block.ID == p.selectedBlock.ID {
+				return i + 1
+			}
 		}
 	}
 
@@ -184,9 +215,28 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 func (p *ProgramPanel) repositionAllBlocks() {
 	// Располагаем блоки вертикально с отступами
 	currentY := 50.0
+	indentLevel := 0 // Уровень вложенности для циклов
+
 	for _, block := range p.programMgr.program.Blocks {
-		block.X = 100
-		block.Y = currentY
+		// Вычисляем отступ в зависимости от типа блока
+		switch block.Type {
+		case BlockTypeLoopStart:
+			// Начало цикла - отступ вправо
+			block.X = 100 + float64(indentLevel*40)
+			block.Y = currentY
+			indentLevel++
+
+		case BlockTypeLoopEnd:
+			// Конец цикла - отступ обратно влево
+			indentLevel = max(0, indentLevel-1)
+			block.X = 100 + float64(indentLevel*40)
+			block.Y = currentY
+
+		default:
+			// Обычные блоки
+			block.X = 100 + float64(indentLevel*40)
+			block.Y = currentY
+		}
 
 		// Обновляем позицию виджета, если он существует
 		if widget, exists := p.blockWidgets[block.ID]; exists {
@@ -298,6 +348,13 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 		return
 	}
 
+	// Проверяем, является ли блок частью цикла
+	if blockToRemove.Type == BlockTypeLoopStart || blockToRemove.Type == BlockTypeLoopEnd {
+		// Удаление цикла обрабатывается в main_gui.go через deleteLoopWithConfirmation
+		log.Printf("Блок цикла '%s' (ID: %d) требует подтверждения для удаления", blockToRemove.Title, blockID)
+		return
+	}
+
 	// Находим индекс удаляемого блока
 	removeIndex := -1
 	for i, block := range p.programMgr.program.Blocks {
@@ -405,8 +462,8 @@ func (p *ProgramPanel) HighlightConnections(block *ProgramBlock) {
 		return
 	}
 
-	// В дракон-схеме подсвечиваем связь, которая идет ОТ выбранного блока (кроме блока "Стоп")
-	if block.Type != BlockTypeStop {
+	// В дракон-схеме подсвечиваем связь, которая идет ОТ выбранного блока (кроме блока "Стоп" и конца цикла)
+	if block.Type != BlockTypeStop && block.Type != BlockTypeLoopEnd {
 		for _, conn := range p.connections {
 			if conn.fromBlockID == block.ID {
 				conn.isHighlighted = true

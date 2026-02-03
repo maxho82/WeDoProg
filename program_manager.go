@@ -71,7 +71,8 @@ const (
 	BlockTypeMotor
 	BlockTypeLED
 	BlockTypeWait
-	BlockTypeLoop
+	BlockTypeLoopStart // Начало цикла
+	BlockTypeLoopEnd   // Конец цикла
 	BlockTypeCondition
 	BlockTypeTiltSensor
 	BlockTypeDistanceSensor
@@ -80,6 +81,15 @@ const (
 	BlockTypeCurrentSensor
 	BlockTypeStop
 )
+
+// LoopContext контекст выполнения цикла
+type LoopContext struct {
+	StartBlockID int  // ID блока начала цикла
+	EndBlockID   int  // ID блока конца цикла
+	CurrentIter  int  // Текущая итерация
+	MaxIter      int  // Максимальное количество итераций (0 - бесконечно)
+	IsForever    bool // Бесконечный цикл
+}
 
 // Метод для установки callback
 func (pm *ProgramManager) SetCurrentBlockCallback(callback func(blockID int)) {
@@ -299,14 +309,26 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			return nil
 		}
 
-	case BlockTypeLoop:
-		block.Title = "Повторять"
-		block.Description = "Цикл повторений"
+	case BlockTypeLoopStart:
+		block.Title = "ДЛЯ"
+		block.Description = "Начало цикла"
 		block.Color = "#9C27B0"
 		block.Parameters["count"] = 5
 		block.Parameters["forever"] = false
+		block.Parameters["loopEndID"] = 0        // ID блока конца цикла
+		block.Parameters["currentIteration"] = 0 // Текущая итерация
 		block.OnExecute = func() error {
-			log.Println("Цикл выполняется")
+			log.Println("Начало цикла")
+			return nil
+		}
+
+	case BlockTypeLoopEnd:
+		block.Title = "КЦ"
+		block.Description = "Конец цикла"
+		block.Color = "#9C27B0"
+		block.Parameters["loopStartID"] = 0 // ID блока начала цикла
+		block.OnExecute = func() error {
+			log.Println("Конец цикла")
 			return nil
 		}
 
@@ -459,23 +481,18 @@ func (pm *ProgramManager) RunProgram() error {
 
 // executeProgram выполняет программу
 func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
-	currentBlock := startBlock
-	executedBlocks := make(map[int]bool)
-
 	log.Println("=== Начало выполнения программы ===")
 
-	// Уведомляем о начале выполнения (блок "Начать")
-	if pm.currentBlockCB != nil {
-		pm.currentBlockCB(startBlock.ID)
-	}
+	// Стек для контекстов циклов
+	loopStack := make([]*LoopContext, 0)
+
+	// Карта для отслеживания текущих итераций циклов
+	loopIterations := make(map[int]int)
+
+	// Начинаем с стартового блока
+	currentBlock := startBlock
 
 	for pm.currentState == ProgramStateRunning && currentBlock != nil {
-		if executedBlocks[currentBlock.ID] {
-			log.Printf("Предотвращение бесконечного цикла: блок %d уже выполнялся", currentBlock.ID)
-			break
-		}
-		executedBlocks[currentBlock.ID] = true
-
 		// Если это блок "Стоп", выполняем его и завершаем
 		if currentBlock.Type == BlockTypeStop {
 			log.Printf(">>> Выполнение блока: %s (ID: %d) <<<", currentBlock.Title, currentBlock.ID)
@@ -503,26 +520,184 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 			pm.currentBlockCB(currentBlock.ID)
 		}
 
-		// Выполняем блок
-		if currentBlock.OnExecute != nil {
-			startTime := time.Now()
-
-			if err := currentBlock.OnExecute(); err != nil {
-				log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
+		// Обрабатываем специальные блоки
+		switch currentBlock.Type {
+		case BlockTypeLoopStart:
+			// Начало цикла
+			loopEndID, _ := currentBlock.Parameters["loopEndID"].(int)
+			if loopEndID == 0 {
+				log.Printf("ОШИБКА: блок цикла %d не имеет связанного конца цикла", currentBlock.ID)
 				pm.currentState = ProgramStateError
 				break
 			}
 
-			executionTime := time.Since(startTime)
-			log.Printf("Блок %d выполнен за %v", currentBlock.ID, executionTime)
-		} else {
-			log.Printf("Блок %d не имеет функции выполнения", currentBlock.ID)
+			// Получаем параметры цикла
+			forever, _ := currentBlock.Parameters["forever"].(bool)
+			count := 1
+			if !forever {
+				if c, ok := currentBlock.Parameters["count"].(int); ok {
+					count = c
+				}
+			}
+
+			// Создаем контекст цикла
+			loopCtx := &LoopContext{
+				StartBlockID: currentBlock.ID,
+				EndBlockID:   loopEndID,
+				CurrentIter:  0,
+				MaxIter:      count,
+				IsForever:    forever,
+			}
+
+			// Добавляем в стек
+			loopStack = append(loopStack, loopCtx)
+			loopIterations[currentBlock.ID] = 0
+
+			log.Printf("Начало цикла %d. Параметры: forever=%v, count=%d",
+				currentBlock.ID, forever, count)
+
+			// Выполняем блок начала цикла
+			if currentBlock.OnExecute != nil {
+				if err := currentBlock.OnExecute(); err != nil {
+					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
+					pm.currentState = ProgramStateError
+					break
+				}
+			}
+
+			// Переходим к следующему блоку (внутри цикла)
+			if currentBlock.NextBlockID > 0 {
+				nextBlock, exists := pm.GetBlock(currentBlock.NextBlockID)
+				if !exists {
+					log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
+					pm.currentState = ProgramStateError
+					break
+				}
+				currentBlock = nextBlock
+			} else {
+				log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
+				break
+			}
+
+			continue
+
+		case BlockTypeLoopEnd:
+			// Конец цикла
+			loopStartID, _ := currentBlock.Parameters["loopStartID"].(int)
+			if loopStartID == 0 {
+				log.Printf("ОШИБКА: блок конца цикла %d не имеет связанного начала цикла", currentBlock.ID)
+				pm.currentState = ProgramStateError
+				break
+			}
+
+			// Находим контекст цикла в стеке
+			var loopCtx *LoopContext
+			ctxIndex := -1
+			for i, ctx := range loopStack {
+				if ctx.StartBlockID == loopStartID {
+					loopCtx = ctx
+					ctxIndex = i
+					break
+				}
+			}
+
+			if loopCtx == nil {
+				log.Printf("ОШИБКА: не найден контекст цикла для начала %d", loopStartID)
+				pm.currentState = ProgramStateError
+				break
+			}
+
+			// Увеличиваем счетчик итераций
+			loopCtx.CurrentIter++
+			loopIterations[loopStartID] = loopCtx.CurrentIter
+
+			// Проверяем, нужно ли продолжать цикл
+			shouldContinue := loopCtx.IsForever || loopCtx.CurrentIter < loopCtx.MaxIter
+
+			log.Printf("Конец цикла %d. Итерация %d/%d. Продолжать: %v",
+				loopStartID, loopCtx.CurrentIter, loopCtx.MaxIter, shouldContinue)
+
+			// Выполняем блок конца цикла
+			if currentBlock.OnExecute != nil {
+				if err := currentBlock.OnExecute(); err != nil {
+					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
+					pm.currentState = ProgramStateError
+					break
+				}
+			}
+
+			if shouldContinue {
+				// Возвращаемся к началу цикла
+				startBlock, exists := pm.GetBlock(loopCtx.StartBlockID)
+				if !exists {
+					log.Printf("ОШИБКА: блок начала цикла %d не найден", loopCtx.StartBlockID)
+					pm.currentState = ProgramStateError
+					break
+				}
+
+				// Переходим к первому блоку после начала цикла
+				if startBlock.NextBlockID > 0 {
+					nextBlock, exists := pm.GetBlock(startBlock.NextBlockID)
+					if !exists {
+						log.Printf("ОШИБКА: следующий блок %d не найден", startBlock.NextBlockID)
+						pm.currentState = ProgramStateError
+						break
+					}
+					currentBlock = nextBlock
+				} else {
+					log.Printf("ОШИБКА: блок начала цикла %d не имеет следующего блока", loopCtx.StartBlockID)
+					pm.currentState = ProgramStateError
+					break
+				}
+			} else {
+				// Завершаем цикл
+				log.Printf("Завершение цикла %d после %d итераций", loopStartID, loopCtx.CurrentIter)
+
+				// Удаляем контекст из стека
+				if ctxIndex >= 0 {
+					loopStack = append(loopStack[:ctxIndex], loopStack[ctxIndex+1:]...)
+				}
+				delete(loopIterations, loopStartID)
+
+				// Переходим к следующему блоку после конца цикла
+				if currentBlock.NextBlockID > 0 {
+					nextBlock, exists := pm.GetBlock(currentBlock.NextBlockID)
+					if !exists {
+						log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
+						pm.currentState = ProgramStateError
+						break
+					}
+					currentBlock = nextBlock
+				} else {
+					log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
+					break
+				}
+			}
+
+			continue
+
+		default:
+			// Выполняем обычный блок
+			if currentBlock.OnExecute != nil {
+				startTime := time.Now()
+
+				if err := currentBlock.OnExecute(); err != nil {
+					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
+					pm.currentState = ProgramStateError
+					break
+				}
+
+				executionTime := time.Since(startTime)
+				log.Printf("Блок %d выполнен за %v", currentBlock.ID, executionTime)
+			} else {
+				log.Printf("Блок %d не имеет функции выполнения", currentBlock.ID)
+			}
 		}
 
 		// Ищем следующий блок
 		if currentBlock.NextBlockID > 0 {
-			nextBlock := pm.findBlockByID(currentBlock.NextBlockID)
-			if nextBlock == nil {
+			nextBlock, exists := pm.GetBlock(currentBlock.NextBlockID)
+			if !exists {
 				log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
 				pm.currentState = ProgramStateError
 				break
@@ -537,8 +712,9 @@ func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
 			break
 		}
 
+		// Небольшая задержка для визуализации (кроме блоков ожидания)
 		if currentBlock.Type != BlockTypeWait {
-			time.Sleep(100 * time.Millisecond) // Добавляем небольшую задержку для визуализации
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 
@@ -842,4 +1018,67 @@ func (pm *ProgramManager) notifyStateChange() {
 	if pm.stateChangeCB != nil {
 		pm.stateChangeCB(pm.currentState)
 	}
+}
+
+// FindLoopEndID находит ID конца цикла для заданного начала цикла
+func (pm *ProgramManager) FindLoopEndID(loopStartID int) (int, bool) {
+	loopStartBlock, exists := pm.GetBlock(loopStartID)
+	if !exists || loopStartBlock.Type != BlockTypeLoopStart {
+		return 0, false
+	}
+
+	// Если уже есть сохраненный ID конца цикла
+	if loopEndID, ok := loopStartBlock.Parameters["loopEndID"].(int); ok && loopEndID > 0 {
+		return loopEndID, true
+	}
+
+	return 0, false
+}
+
+// FindLoopStartID находит ID начала цикла для заданного конца цикла
+func (pm *ProgramManager) FindLoopStartID(loopEndID int) (int, bool) {
+	loopEndBlock, exists := pm.GetBlock(loopEndID)
+	if !exists || loopEndBlock.Type != BlockTypeLoopEnd {
+		return 0, false
+	}
+
+	// Если уже есть сохраненный ID начала цикла
+	if loopStartID, ok := loopEndBlock.Parameters["loopStartID"].(int); ok && loopStartID > 0 {
+		return loopStartID, true
+	}
+
+	return 0, false
+}
+
+// GetLoopBlocks возвращает все блоки цикла (включая начало и конец)
+func (pm *ProgramManager) GetLoopBlocks(loopStartID int) ([]*ProgramBlock, bool) {
+	loopStartBlock, exists := pm.GetBlock(loopStartID)
+	if !exists || loopStartBlock.Type != BlockTypeLoopStart {
+		return nil, false
+	}
+
+	loopEndID, found := pm.FindLoopEndID(loopStartID)
+	if !found {
+		return nil, false
+	}
+
+	// Находим блоки между началом и концом цикла
+	var loopBlocks []*ProgramBlock
+	inLoop := false
+
+	for _, block := range pm.program.Blocks {
+		if block.ID == loopStartID {
+			inLoop = true
+		}
+
+		if inLoop {
+			loopBlocks = append(loopBlocks, block)
+		}
+
+		if block.ID == loopEndID {
+			break
+		}
+	}
+
+	return loopBlocks, true
 }
