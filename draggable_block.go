@@ -6,211 +6,40 @@ import (
 	"log"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 )
 
-// DraggableBlock блок программирования без перетаскивания
+// DraggableBlock кастомный виджет блока программирования
 type DraggableBlock struct {
 	widget.BaseWidget
-	block           *ProgramBlock
-	programMgr      *ProgramManager
-	gui             *MainGUI
-	content         fyne.CanvasObject
-	isSelected      bool
-	isExecuting     bool // Флаг выполнения
-	connectorTop    *canvas.Circle
-	connectorBottom *canvas.Circle
-	selectionBorder *canvas.Rectangle
-	executingBorder *canvas.Rectangle // Отдельная рамка для выполнения
-	highlightColor  color.Color       // Цвет выделения
-	executingColor  color.Color       // Цвет выполнения
+	block       *ProgramBlock
+	programMgr  *ProgramManager
+	gui         *MainGUI
+	isSelected  bool
+	isExecuting bool
 }
 
-// draggableBlockRenderer рендерер для DraggableBlock
-type draggableBlockRenderer struct {
-	widget  *DraggableBlock
-	objects []fyne.CanvasObject
-}
-
-// NewDraggableBlock создает блок
+// NewDraggableBlock создает новый кастомный блок
 func NewDraggableBlock(block *ProgramBlock, programMgr *ProgramManager, gui *MainGUI) *DraggableBlock {
 	d := &DraggableBlock{
-		block:          block,
-		programMgr:     programMgr,
-		gui:            gui,
-		isSelected:     false,
-		isExecuting:    false,
-		highlightColor: color.NRGBA{R: 255, G: 215, B: 0, A: 255}, // Желтый цвет выделения
-		executingColor: color.NRGBA{R: 0, G: 255, B: 0, A: 255},   // Зеленый цвет выполнения
+		block:      block,
+		programMgr: programMgr,
+		gui:        gui,
 	}
 
+	// Устанавливаем размер блока
+	block.Width = 180
+	block.Height = 100
+
+	// КРИТИЧЕСКИ ВАЖНЫЙ ВЫЗОВ
 	d.ExtendBaseWidget(d)
-	d.createContent()
 
 	return d
 }
 
-// createContent создает содержимое блока
-func (d *DraggableBlock) createContent() {
-	// Цвет блока
-	blockColor := parseColor(d.block.Color)
-	if blockColor == nil {
-		blockColor = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-	}
-
-	// Определяем форму блока в зависимости от типа
-	var cornerRadius float32 = 8
-	var shape string = "rectangle" // По умолчанию прямоугольник
-
-	// Для блоков "Начать" и "Стоп" используем овальную форму
-	if d.block.Type == BlockTypeStart || d.block.Type == BlockTypeStop {
-		shape = "oval"
-		cornerRadius = float32(d.block.Height) / 2
-	} else if d.block.Type == BlockTypeLoopStart || d.block.Type == BlockTypeLoopEnd {
-		// Для блоков цикла используем шестиугольную форму
-		shape = "hexagon"
-	}
-
-	// Фон блока
-	var bg fyne.CanvasObject
-	if shape == "oval" {
-		// Овальная форма для начала и конца программы
-		rect := canvas.NewRectangle(blockColor)
-		rect.CornerRadius = cornerRadius
-		rect.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
-		bg = rect
-	} else if shape == "hexagon" {
-		// Шестиугольная форма для блоков цикла
-		bg = createHexagon(blockColor, float32(d.block.Width), float32(d.block.Height))
-	} else {
-		// Прямоугольная форма по умолчанию
-		rect := canvas.NewRectangle(blockColor)
-		rect.CornerRadius = cornerRadius
-		rect.SetMinSize(fyne.NewSize(float32(d.block.Width), float32(d.block.Height)))
-		bg = rect
-	}
-
-	// Добавляем выделение при выборе (желтая рамка 5 пикселей)
-	if shape == "oval" {
-		d.selectionBorder = canvas.NewRectangle(color.Transparent)
-		d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
-		d.selectionBorder.CornerRadius = cornerRadius + 2
-		d.selectionBorder.StrokeColor = color.Transparent
-		d.selectionBorder.StrokeWidth = 5 // Толщина рамки выделения
-	} else if shape == "hexagon" {
-		// Для шестиугольника создаем специальную рамку
-		d.selectionBorder = createHexagon(color.Transparent, float32(d.block.Width)+10, float32(d.block.Height)+10)
-		d.selectionBorder.StrokeColor = color.Transparent
-		d.selectionBorder.StrokeWidth = 5
-	} else {
-		d.selectionBorder = canvas.NewRectangle(color.Transparent)
-		d.selectionBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+10, float32(d.block.Height)+10))
-		d.selectionBorder.CornerRadius = cornerRadius + 2
-		d.selectionBorder.StrokeColor = color.Transparent
-		d.selectionBorder.StrokeWidth = 5
-	}
-
-	// Иконка в зависимости от типа блока
-	var iconText string
-	switch d.block.Type {
-	case BlockTypeStart:
-		iconText = "▶"
-	case BlockTypeStop:
-		iconText = "■"
-	case BlockTypeLoopStart:
-		iconText = "↻"
-	case BlockTypeLoopEnd:
-		iconText = "⏹"
-	default:
-		iconText = "◼"
-	}
-
-	icon := canvas.NewText(iconText, color.White)
-	icon.TextSize = 20
-
-	// Заголовок
-	title := canvas.NewText(d.block.Title, color.White)
-	title.TextStyle.Bold = true
-	title.Alignment = fyne.TextAlignCenter
-	title.TextSize = 14
-
-	// Описание
-	desc := canvas.NewText(d.block.Description, color.White)
-	desc.Alignment = fyne.TextAlignCenter
-	desc.TextSize = 10
-
-	// Контейнер содержимого
-	content := container.NewVBox(
-		container.NewCenter(icon),
-		container.NewCenter(title),
-		container.NewCenter(desc),
-	)
-
-	// Создаем коннекторы (точки соединения)
-	d.connectorTop = canvas.NewCircle(color.Transparent)
-	d.connectorTop.StrokeWidth = 0
-	d.connectorTop.Resize(fyne.NewSize(1, 1))
-
-	d.connectorBottom = canvas.NewCircle(color.Transparent)
-	d.connectorBottom.StrokeWidth = 0
-	d.connectorBottom.Resize(fyne.NewSize(1, 1))
-
-	// Контейнер для коннекторов
-	connectors := container.NewWithoutLayout(
-		d.connectorTop,
-		d.connectorBottom,
-	)
-
-	// Рамка выделения выполнения (зеленая)
-	if shape == "oval" {
-		d.executingBorder = canvas.NewRectangle(color.Transparent)
-		d.executingBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+12, float32(d.block.Height)+12))
-		d.executingBorder.CornerRadius = cornerRadius + 3
-		d.executingBorder.StrokeColor = color.Transparent
-		d.executingBorder.StrokeWidth = 6 // Толстая рамка для выполнения
-	} else if shape == "hexagon" {
-		// Для шестиугольника создаем специальную рамку
-		d.executingBorder = createHexagon(color.Transparent, float32(d.block.Width)+12, float32(d.block.Height)+12)
-		d.executingBorder.StrokeColor = color.Transparent
-		d.executingBorder.StrokeWidth = 6
-	} else {
-		d.executingBorder = canvas.NewRectangle(color.Transparent)
-		d.executingBorder.SetMinSize(fyne.NewSize(float32(d.block.Width)+12, float32(d.block.Height)+12))
-		d.executingBorder.CornerRadius = cornerRadius + 3
-		d.executingBorder.StrokeColor = color.Transparent
-		d.executingBorder.StrokeWidth = 6
-	}
-
-	// ВАЖНО: Порядок элементов в Stack имеет значение!
-	// 1. Фон (bg)
-	// 2. Содержимое (content)
-	// 3. Рамка выделения (selectionBorder) - должна быть над фоном, но под коннекторами
-	// 4. Коннекторы (connectors) - должны быть сверху всего
-	d.content = container.NewStack(
-		bg,
-		container.NewPadded(content),
-		d.selectionBorder,
-		d.executingBorder,
-		connectors,
-	)
-}
-
-// createHexagon создает шестиугольную форму для блоков цикла
-func createHexagon(fillColor color.Color, width, height float32) *canvas.Rectangle {
-	rect := canvas.NewRectangle(fillColor)
-	rect.SetMinSize(fyne.NewSize(width, height))
-	rect.CornerRadius = 8 // Небольшое скругление углов
-	return rect
-}
-
-// CreateRenderer создает рендерер виджета
+// CreateRenderer создает кастомный рендерер для блока
 func (d *DraggableBlock) CreateRenderer() fyne.WidgetRenderer {
-	return &draggableBlockRenderer{
-		widget:  d,
-		objects: []fyne.CanvasObject{d.content},
-	}
+	return newBlockRenderer(d)
 }
 
 // Tapped обработка клика по блоку
@@ -229,6 +58,9 @@ func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
 
 	// Показываем свойства блока
 	d.gui.showBlockProperties(d.block)
+
+	// Обновляем выделение
+	d.SetSelected(true)
 }
 
 // TappedSecondary обработка правого клика по блоку
@@ -282,40 +114,10 @@ func (d *DraggableBlock) SetSelected(selected bool) {
 	if selected {
 		d.isExecuting = false // Сбрасываем выделение выполнения при обычном выделении
 	}
-	d.updateSelection()
-	d.updateExecution()
-}
-
-// updateSelection обновляет внешний вид блока в зависимости от выделения
-func (d *DraggableBlock) updateSelection() {
-	if d.selectionBorder != nil {
-		if d.isSelected {
-			d.selectionBorder.StrokeColor = d.highlightColor // Желтая рамка
-			d.selectionBorder.StrokeWidth = 5                // 5 пикселей
-		} else {
-			d.selectionBorder.StrokeColor = color.Transparent
-			d.selectionBorder.StrokeWidth = 0
-		}
-		d.selectionBorder.Refresh()
-	}
 	d.Refresh()
 }
 
-// GetTopConnectorPosition возвращает позицию верхнего коннектора
-func (d *DraggableBlock) GetTopConnectorPosition() fyne.Position {
-	blockPos := d.Position()
-	blockSize := d.Size()
-	return fyne.NewPos(blockPos.X+blockSize.Width/2, blockPos.Y)
-}
-
-// GetBottomConnectorPosition возвращает позицию нижнего коннектора
-func (d *DraggableBlock) GetBottomConnectorPosition() fyne.Position {
-	blockPos := d.Position()
-	blockSize := d.Size()
-	return fyne.NewPos(blockPos.X+blockSize.Width/2, blockPos.Y+blockSize.Height)
-}
-
-// Метод для установки состояния выполнения:
+// SetExecuting устанавливает состояние выполнения блока
 func (d *DraggableBlock) SetExecuting(executing bool) {
 	// Блок "Стоп" не выделяем как выполняющийся
 	if d.block.Type == BlockTypeStop {
@@ -323,23 +125,27 @@ func (d *DraggableBlock) SetExecuting(executing bool) {
 	}
 
 	d.isExecuting = executing
-	d.updateExecution()
 	d.Refresh()
 }
 
-// Метод для обновления отображения выполнения:
-func (d *DraggableBlock) updateExecution() {
-	if d.executingBorder != nil {
-		if d.isExecuting {
-			d.executingBorder.StrokeColor = d.executingColor // Зеленая рамка
-			d.executingBorder.StrokeWidth = 6                // 6 пикселей
-		} else {
-			d.executingBorder.StrokeColor = color.Transparent
-			d.executingBorder.StrokeWidth = 0
-		}
-		d.executingBorder.Refresh()
-	}
-	d.Refresh()
+// GetTopConnectorPosition возвращает позицию верхнего коннектора
+func (d *DraggableBlock) GetTopConnectorPosition() fyne.Position {
+	pos := d.Position()
+	size := d.Size()
+	shapeType := getShapeType(d.block.Type)
+
+	topConnector, _ := calculateConnectorPositions(shapeType, pos, size)
+	return topConnector
+}
+
+// GetBottomConnectorPosition возвращает позицию нижнего коннектора
+func (d *DraggableBlock) GetBottomConnectorPosition() fyne.Position {
+	pos := d.Position()
+	size := d.Size()
+	shapeType := getShapeType(d.block.Type)
+
+	_, bottomConnector := calculateConnectorPositions(shapeType, pos, size)
+	return bottomConnector
 }
 
 // parseColor преобразует строку цвета в color.Color
@@ -351,7 +157,9 @@ func parseColor(colorStr string) color.Color {
 		b, _ := hexToByte(colorStr[5:7])
 		return color.NRGBA{R: r, G: g, B: b, A: 255}
 	}
-	return nil
+
+	// Цвета по умолчанию для типов блоков
+	return color.NRGBA{R: 100, G: 100, B: 100, A: 255}
 }
 
 // hexToByte преобразует hex строку в байт
@@ -372,27 +180,4 @@ func hexToByte(hexStr string) (byte, error) {
 		value = value*16 + digit
 	}
 	return value, nil
-}
-
-func (r *draggableBlockRenderer) Layout(size fyne.Size) {
-	// Обновляем размеры всех объектов
-	for _, obj := range r.objects {
-		obj.Resize(size)
-	}
-}
-
-func (r *draggableBlockRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(float32(r.widget.block.Width), float32(r.widget.block.Height))
-}
-
-func (r *draggableBlockRenderer) Refresh() {
-	for _, obj := range r.objects {
-		obj.Refresh()
-	}
-}
-
-func (r *draggableBlockRenderer) Destroy() {}
-
-func (r *draggableBlockRenderer) Objects() []fyne.CanvasObject {
-	return r.objects
 }

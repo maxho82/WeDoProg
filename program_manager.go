@@ -141,6 +141,38 @@ func (pm *ProgramManager) CreateBlock(blockType BlockType, x, y float64) *Progra
 	return block
 }
 
+// getBlockColor возвращает цвет для типа блока
+func getBlockColor(blockType BlockType) string {
+	switch blockType {
+	case BlockTypeStart:
+		return "#4CAF50" // Зеленый
+	case BlockTypeMotor:
+		return "#2196F3" // Синий
+	case BlockTypeLED:
+		return "#FF9800" // Оранжевый
+	case BlockTypeWait:
+		return "#9E9E9E" // Серый
+	case BlockTypeLoopStart, BlockTypeLoopEnd:
+		return "#9C27B0" // Фиолетовый
+	case BlockTypeCondition:
+		return "#3F51B5" // Индиго
+	case BlockTypeTiltSensor:
+		return "#673AB7" // Глубокий фиолетовый
+	case BlockTypeDistanceSensor:
+		return "#00BCD4" // Голубой
+	case BlockTypeSound:
+		return "#FF5722" // Глубокий оранжевый
+	case BlockTypeVoltageSensor:
+		return "#8BC34A" // Светло-зеленый
+	case BlockTypeCurrentSensor:
+		return "#F44336" // Красный
+	case BlockTypeStop:
+		return "#F44336" // Красный
+	default:
+		return "#607D8B" // Сине-серый
+	}
+}
+
 // InsertBlock вставляет блок в программу в указанную позицию
 func (pm *ProgramManager) InsertBlock(block *ProgramBlock, afterBlockID int) bool {
 	// Если afterBlockID = 0, добавляем в начало
@@ -229,6 +261,9 @@ func (pm *ProgramManager) InsertBlock(block *ProgramBlock, afterBlockID int) boo
 
 // configureBlock настраивает блок
 func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
+	// Устанавливаем цвет из функции выше
+	block.Color = getBlockColor(block.Type)
+
 	switch block.Type {
 	case BlockTypeStart:
 		block.Title = "Начать"

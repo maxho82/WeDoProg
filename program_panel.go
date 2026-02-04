@@ -215,28 +215,11 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 func (p *ProgramPanel) repositionAllBlocks() {
 	// Располагаем блоки вертикально с отступами
 	currentY := 50.0
-	indentLevel := 0 // Уровень вложенности для циклов
 
 	for _, block := range p.programMgr.program.Blocks {
-		// Вычисляем отступ в зависимости от типа блока
-		switch block.Type {
-		case BlockTypeLoopStart:
-			// Начало цикла - отступ вправо
-			block.X = 100 + float64(indentLevel*40)
-			block.Y = currentY
-			indentLevel++
-
-		case BlockTypeLoopEnd:
-			// Конец цикла - отступ обратно влево
-			indentLevel = max(0, indentLevel-1)
-			block.X = 100 + float64(indentLevel*40)
-			block.Y = currentY
-
-		default:
-			// Обычные блоки
-			block.X = 100 + float64(indentLevel*40)
-			block.Y = currentY
-		}
+		// ВСЕ блоки имеют одинаковый отступ - убираем смещение для циклов
+		block.X = 100
+		block.Y = currentY
 
 		// Обновляем позицию виджета, если он существует
 		if widget, exists := p.blockWidgets[block.ID]; exists {
