@@ -406,3 +406,9 @@ func (dm *DeviceManager) PlayToneAndWait(portID byte, frequency uint16, duration
 
 	return nil
 }
+
+// GetDeviceFromPort получает устройство по порту
+func (hm *HubManager) GetDeviceFromPort(portID byte) (*Device, bool) {
+	device, exists := hm.devices[portID]
+	return device, exists
+}

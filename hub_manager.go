@@ -799,3 +799,17 @@ func (hm *HubManager) mapDeviceType(deviceType byte) byte {
 func isExternalPort(portID byte) bool {
 	return portID == 1 || portID == 2 || portID == 6
 }
+
+// bytesToHexString преобразует байты в hex строку
+func bytesToHexString(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	hexStr := make([]string, len(data))
+	for i, b := range data {
+		hexStr[i] = fmt.Sprintf("%02X", b)
+	}
+
+	return strings.Join(hexStr, " ")
+}

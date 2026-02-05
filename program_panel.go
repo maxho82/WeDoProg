@@ -3,6 +3,7 @@ package main
 import (
 	"image/color"
 	"log"
+	"math"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -17,8 +18,10 @@ type ProgramPanel struct {
 	programMgr    *ProgramManager
 	connections   []*ConnectionLine
 	blockWidgets  map[int]*DraggableBlock
-	selectedBlock *ProgramBlock   // Выбранный блок для выделения
-	gridContainer *fyne.Container // Контейнер для сетки
+	selectedBlock *ProgramBlock // Выбранный блок для выделения
+	scale         float32
+	baseWidth     float32 // Базовая ширина холста
+	baseHeight    float32 // Базовая высота холста
 }
 
 // ConnectionLine линия соединения между блоками
@@ -36,14 +39,25 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 		programMgr:   programMgr,
 		connections:  make([]*ConnectionLine, 0),
 		blockWidgets: make(map[int]*DraggableBlock),
+		scale:        1.0, // Начальный масштаб 100%
+		baseWidth:    2000,
+		baseHeight:   2000,
 	}
 
-	// Создаем основной контейнер с сеткой и блоками
+	// Создаем основной контейнер с прозрачным фоном
 	panel.content = container.NewWithoutLayout()
-	panel.addGrid()
+	panel.content.Resize(fyne.NewSize(panel.baseWidth, panel.baseHeight))
 
+	// Создаем скролл-контейнер с поддержкой прокрутки мышью
 	panel.scroll = container.NewScroll(panel.content)
-	panel.scroll.SetMinSize(fyne.NewSize(800, 600))
+	panel.scroll.SetMinSize(fyne.NewSize(400, 300)) // Минимальный размер для скролла
+
+	// Включаем прокрутку колесиком мыши
+	panel.scroll.OnScrolled = func(pos fyne.Position) {
+		// Обработка прокрутки колесиком мыши
+		panel.scroll.Offset = pos
+		panel.scroll.Refresh()
+	}
 
 	return panel
 }
@@ -51,37 +65,6 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 // GetContainer возвращает контейнер панели
 func (p *ProgramPanel) GetContainer() fyne.CanvasObject {
 	return p.scroll
-}
-
-// addGrid добавляет сетку на холст
-func (p *ProgramPanel) addGrid() {
-	// Фон сетки
-	bg := canvas.NewRectangle(color.NRGBA{R: 30, G: 30, B: 30, A: 255})
-	bg.SetMinSize(fyne.NewSize(2000, 2000))
-	p.content.Add(bg)
-
-	// Контейнер для линий сетки
-	p.gridContainer = container.NewWithoutLayout()
-
-	// Вертикальные линии
-	for x := 0; x <= 2000; x += 20 {
-		line := canvas.NewLine(color.NRGBA{R: 50, G: 50, B: 50, A: 255})
-		line.Position1 = fyne.NewPos(float32(x), 0)
-		line.Position2 = fyne.NewPos(float32(x), 2000)
-		line.StrokeWidth = 1
-		p.gridContainer.Add(line)
-	}
-
-	// Горизонтальные линии
-	for y := 0; y <= 2000; y += 20 {
-		line := canvas.NewLine(color.NRGBA{R: 50, G: 50, B: 50, A: 255})
-		line.Position1 = fyne.NewPos(0, float32(y))
-		line.Position2 = fyne.NewPos(2000, float32(y))
-		line.StrokeWidth = 1
-		p.gridContainer.Add(line)
-	}
-
-	p.content.Add(p.gridContainer)
 }
 
 // AddBlock добавляет блок на холст с учетом выделенного блока
@@ -123,10 +106,17 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 	// Пересчитываем позиции всех блоков
 	p.repositionAllBlocks()
 
-	// Создаем виджет блока
-	blockWidget := NewDraggableBlock(block, p.programMgr, p.gui)
-	blockWidget.Resize(fyne.NewSize(float32(block.Width), float32(block.Height)))
-	blockWidget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
+	// Создаем виджет блока с учетом текущего масштаба
+	blockWidget := NewDraggableBlock(block, p.programMgr, p.gui, p)
+
+	// Применяем масштаб к размеру блока
+	scaledWidth := float32(block.Width) * p.scale
+	scaledHeight := float32(block.Height) * p.scale
+	scaledX := float32(block.X) * p.scale
+	scaledY := float32(block.Y) * p.scale
+
+	blockWidget.Resize(fyne.NewSize(scaledWidth, scaledHeight))
+	blockWidget.Move(fyne.NewPos(scaledX, scaledY))
 
 	// Добавляем на панель
 	p.content.Add(blockWidget)
@@ -134,6 +124,9 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 
 	// Обновляем ВСЕ связи (после того как виджет создан)
 	p.updateAllConnections()
+
+	// Автоматически расширяем холст при необходимости
+	p.ensureCanvasSize()
 
 	p.content.Refresh()
 
@@ -223,7 +216,9 @@ func (p *ProgramPanel) repositionAllBlocks() {
 
 		// Обновляем позицию виджета, если он существует
 		if widget, exists := p.blockWidgets[block.ID]; exists {
-			widget.Move(fyne.NewPos(float32(block.X), float32(block.Y)))
+			scaledX := float32(block.X) * p.scale
+			scaledY := float32(block.Y) * p.scale
+			widget.Move(fyne.NewPos(scaledX, scaledY))
 		}
 
 		currentY += block.Height + 40
@@ -291,7 +286,7 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 	line := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
 	line.Position1 = fromPos
 	line.Position2 = toPos
-	line.StrokeWidth = 2
+	line.StrokeWidth = 2 * p.scale // Масштабируем толщину линии
 
 	// Добавляем линию на панель
 	p.content.Add(line)
@@ -393,6 +388,9 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 		p.ResetHighlight()
 	}
 
+	// Обновляем размер холста
+	p.ensureCanvasSize()
+
 	p.content.Refresh()
 
 	log.Printf("Блок %d удален с холста. Осталось блоков: %d", blockID, len(p.programMgr.program.Blocks))
@@ -478,15 +476,14 @@ func (p *ProgramPanel) removeConnectionsForBlock(blockID int) {
 
 // Clear очищает холст
 func (p *ProgramPanel) Clear() {
-	// Оставляем только фон и сетку
-	var newObjects []fyne.CanvasObject
-	newObjects = append(newObjects, p.content.Objects[0]) // Фон
-	newObjects = append(newObjects, p.content.Objects[1]) // Сетка
-
-	p.content.Objects = newObjects
+	// Очищаем все объекты
+	p.content.Objects = nil
 	p.connections = make([]*ConnectionLine, 0)
 	p.blockWidgets = make(map[int]*DraggableBlock)
 	p.selectedBlock = nil
+
+	// Восстанавливаем базовый размер холста
+	p.content.Resize(fyne.NewSize(p.baseWidth, p.baseHeight))
 	p.content.Refresh()
 }
 
@@ -496,7 +493,7 @@ func (p *ProgramPanel) HighlightConnections(block *ProgramBlock) {
 	for _, conn := range p.connections {
 		conn.isHighlighted = false
 		conn.line.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255} // Синий
-		conn.line.StrokeWidth = 2
+		conn.line.StrokeWidth = 2 * p.scale
 	}
 
 	if block == nil {
@@ -510,7 +507,7 @@ func (p *ProgramPanel) HighlightConnections(block *ProgramBlock) {
 			if conn.fromBlockID == block.ID {
 				conn.isHighlighted = true
 				conn.line.StrokeColor = color.NRGBA{R: 255, G: 215, B: 0, A: 255} // Золотой
-				conn.line.StrokeWidth = 3
+				conn.line.StrokeWidth = 3 * p.scale
 				break // только одну связь
 			}
 		}
@@ -524,7 +521,7 @@ func (p *ProgramPanel) ResetHighlight() {
 	for _, conn := range p.connections {
 		conn.isHighlighted = false
 		conn.line.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255}
-		conn.line.StrokeWidth = 2
+		conn.line.StrokeWidth = 2 * p.scale
 	}
 	p.content.Refresh()
 }
@@ -568,6 +565,10 @@ func (p *ProgramPanel) updateConnections() {
 
 			conn.line.Position1 = fromPos
 			conn.line.Position2 = toPos
+			conn.line.StrokeWidth = 2 * p.scale
+			if conn.isHighlighted {
+				conn.line.StrokeWidth = 3 * p.scale
+			}
 			conn.line.Refresh()
 		}
 	}
@@ -652,5 +653,192 @@ func (p *ProgramPanel) RemoveLoopBlocks(loopBlocks []*ProgramBlock) {
 	// Обновляем все связи
 	p.updateAllConnections()
 
+	// Обновляем размер холста
+	p.ensureCanvasSize()
+
+	p.content.Refresh()
+}
+
+// ensureCanvasSize автоматически увеличивает холст при необходимости
+func (p *ProgramPanel) ensureCanvasSize() {
+	if len(p.programMgr.program.Blocks) == 0 {
+		// Если нет блоков, используем базовый размер
+		p.content.Resize(fyne.NewSize(p.baseWidth, p.baseHeight))
+		return
+	}
+
+	// Находим максимальные координаты блоков
+	var maxX, maxY float64
+	for _, block := range p.programMgr.program.Blocks {
+		// Учитываем правый нижний угол блока
+		blockRight := block.X + block.Width
+		blockBottom := block.Y + block.Height
+
+		if blockRight > maxX {
+			maxX = blockRight
+		}
+		if blockBottom > maxY {
+			maxY = blockBottom
+		}
+	}
+
+	// Добавляем отступы (200 пикселей) и применяем масштаб
+	requiredWidth := float32(maxX+200) * p.scale
+	requiredHeight := float32(maxY+200) * p.scale
+
+	// Проверяем, нужно ли увеличить холст
+	currentSize := p.content.Size()
+	if requiredWidth > currentSize.Width || requiredHeight > currentSize.Height {
+		// Увеличиваем холст до нужного размера
+		newWidth := math.Max(float64(currentSize.Width), float64(requiredWidth))
+		newHeight := math.Max(float64(currentSize.Height), float64(requiredHeight))
+
+		p.content.Resize(fyne.NewSize(float32(newWidth), float32(newHeight)))
+		log.Printf("Холст увеличен до: %.0f x %.0f (масштаб: %.2f)", newWidth, newHeight, p.scale)
+
+		// Обновляем скролл
+		p.scroll.Refresh()
+	}
+}
+
+// ApplyScale применяет масштаб ко всем элементам холста
+func (p *ProgramPanel) ApplyScale(newScale float32) {
+	if newScale < 0.5 || newScale > 3.0 {
+		return // Ограничиваем масштаб
+	}
+
+	// Сохраняем старый масштаб для вычисления коэффициента
+	oldScale := p.scale
+	p.scale = newScale
+
+	// Масштабируем все блокы
+	for _, block := range p.programMgr.program.Blocks {
+		if widget, exists := p.blockWidgets[block.ID]; exists {
+			// Получаем текущую позицию блока в оригинальных координатах
+			originalX := float32(block.X)
+			originalY := float32(block.Y)
+			originalWidth := float32(block.Width)
+			originalHeight := float32(block.Height)
+
+			// Применяем новый масштаб
+			scaledX := originalX * newScale
+			scaledY := originalY * newScale
+			scaledWidth := originalWidth * newScale
+			scaledHeight := originalHeight * newScale
+
+			widget.Resize(fyne.NewSize(scaledWidth, scaledHeight))
+			widget.Move(fyne.NewPos(scaledX, scaledY))
+			widget.Refresh()
+		}
+	}
+
+	// Масштабируем и перерисовываем все соединения
+	for _, conn := range p.connections {
+		// Обновляем толщину линии
+		if conn.isHighlighted {
+			conn.line.StrokeWidth = 3 * newScale
+		} else {
+			conn.line.StrokeWidth = 2 * newScale
+		}
+
+		// Получаем виджеты блоков для обновления позиций
+		fromWidget, fromExists := p.blockWidgets[conn.fromBlockID]
+		toWidget, toExists := p.blockWidgets[conn.toBlockID]
+
+		if fromExists && toExists {
+			// Обновляем позиции линии
+			fromPos := fromWidget.GetBottomConnectorPosition()
+			toPos := toWidget.GetTopConnectorPosition()
+
+			conn.line.Position1 = fromPos
+			conn.line.Position2 = toPos
+		}
+
+		conn.line.Refresh()
+	}
+
+	// Обновляем размер холста
+	p.ensureCanvasSize()
+
+	// Обновляем отображение
+	p.content.Refresh()
+	p.scroll.Refresh()
+
+	log.Printf("Масштаб изменен: %.2f -> %.2f", oldScale, newScale)
+}
+
+// ZoomIn увеличивает масштаб
+func (p *ProgramPanel) ZoomIn() {
+	newScale := p.scale * 1.2
+	if newScale > 3.0 {
+		newScale = 3.0
+	}
+	p.ApplyScale(newScale)
+}
+
+// ZoomOut уменьшает масштаб
+func (p *ProgramPanel) ZoomOut() {
+	newScale := p.scale / 1.2
+	if newScale < 0.5 {
+		newScale = 0.5
+	}
+	p.ApplyScale(newScale)
+}
+
+// ResetZoom сбрасывает масштаб к 100%
+func (p *ProgramPanel) ResetZoom() {
+	p.ApplyScale(1.0)
+}
+
+// GetScale возвращает текущий масштаб
+func (p *ProgramPanel) GetScale() float32 {
+	return p.scale
+}
+
+// scrollToBlock прокручивает панель к указанному блоку
+func (p *ProgramPanel) scrollToBlock(block *ProgramBlock) {
+	if widget, exists := p.blockWidgets[block.ID]; exists {
+		// Получаем позицию и размер блока
+		pos := widget.Position()
+		size := widget.Size()
+
+		// Вычисляем центр блока
+		centerX := pos.X + size.Width/2
+		centerY := pos.Y + size.Height/2
+
+		// Вычисляем смещение для скролла
+		scrollWidth := p.scroll.Size().Width
+		scrollHeight := p.scroll.Size().Height
+
+		// Центрируем блок в видимой области
+		offsetX := centerX - scrollWidth/2
+		offsetY := centerY - scrollHeight/2
+
+		// Ограничиваем смещение
+		contentSize := p.content.Size()
+		maxOffsetX := contentSize.Width - scrollWidth
+		maxOffsetY := contentSize.Height - scrollHeight
+
+		if offsetX < 0 {
+			offsetX = 0
+		} else if offsetX > maxOffsetX {
+			offsetX = maxOffsetX
+		}
+
+		if offsetY < 0 {
+			offsetY = 0
+		} else if offsetY > maxOffsetY {
+			offsetY = maxOffsetY
+		}
+
+		// Применяем смещение
+		p.scroll.Offset = fyne.NewPos(offsetX, offsetY)
+		p.scroll.Refresh()
+	}
+}
+
+// RefreshAllConnections обновляет все соединения (используется при изменении масштаба)
+func (p *ProgramPanel) RefreshAllConnections() {
+	p.updateConnections()
 	p.content.Refresh()
 }

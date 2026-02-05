@@ -27,6 +27,7 @@ type blockRenderer struct {
 	highlighted bool
 	executing   bool
 	shapeType   BlockShapeType
+	scale       float32 // Текущий масштаб
 }
 
 // newBlockRenderer создает новый рендерер для блока
@@ -36,19 +37,20 @@ func newBlockRenderer(widget *DraggableBlock) *blockRenderer {
 		lineColor: parseColor(widget.block.Color),
 		lineWidth: 2.0,
 		shapeType: getShapeType(widget.block.Type),
+		scale:     widget.programPanel.GetScale(), // Получаем текущий масштаб
 	}
 
-	// Создаем текстовые элементы
+	// Создаем текстовые элементы с учетом масштаба
 	r.iconText = canvas.NewText(getBlockIcon(widget.block.Type), color.White)
-	r.iconText.TextSize = 20
+	r.iconText.TextSize = 20 * r.scale // Масштабируем размер текста
 	r.iconText.TextStyle.Bold = true
 
 	r.titleText = canvas.NewText(widget.block.Title, color.White)
-	r.titleText.TextSize = 14
+	r.titleText.TextSize = 14 * r.scale // Масштабируем размер текста
 	r.titleText.TextStyle.Bold = true
 
 	r.descText = canvas.NewText(widget.block.Description, color.White)
-	r.descText.TextSize = 10
+	r.descText.TextSize = 10 * r.scale // Масштабируем размер текста
 
 	// Создаем линии для фигуры
 	r.createShapeLines()
@@ -75,7 +77,7 @@ func (r *blockRenderer) createShapeLines() {
 		line := canvas.NewLine(r.lineColor)
 		line.Position1 = vertices[i]
 		line.Position2 = vertices[next]
-		line.StrokeWidth = r.lineWidth
+		line.StrokeWidth = r.lineWidth * r.scale // Масштабируем толщину линии
 		r.shapeLines[i] = line
 	}
 }
@@ -103,6 +105,9 @@ func (r *blockRenderer) updateShapeLines() {
 
 // Layout упорядочивает элементы внутри виджета
 func (r *blockRenderer) Layout(size fyne.Size) {
+	// Обновляем масштаб
+	r.scale = r.widget.programPanel.GetScale()
+
 	// Обновляем линии фигуры
 	r.updateShapeLines()
 
@@ -119,7 +124,12 @@ func (r *blockRenderer) Layout(size fyne.Size) {
 
 // positionTextElements позиционирует текстовые элементы
 func (r *blockRenderer) positionTextElements(centerX, centerY float32, size fyne.Size) {
-	// Размеры текстовых элементов
+	// Обновляем размер текста в соответствии с масштабом
+	r.iconText.TextSize = 20 * r.scale
+	r.titleText.TextSize = 14 * r.scale
+	r.descText.TextSize = 10 * r.scale
+
+	// Размеры текстовых элементов (после обновления масштаба)
 	iconSize := r.iconText.MinSize()
 	titleSize := r.titleText.MinSize()
 
@@ -128,7 +138,7 @@ func (r *blockRenderer) positionTextElements(centerX, centerY float32, size fyne
 		// Иконка выше центра
 		r.iconText.Move(fyne.NewPos(
 			centerX-iconSize.Width/2,
-			centerY-iconSize.Height-5,
+			centerY-iconSize.Height-5*r.scale,
 		))
 
 		// Заголовок по центру
@@ -142,7 +152,7 @@ func (r *blockRenderer) positionTextElements(centerX, centerY float32, size fyne
 			descSize := r.descText.MinSize()
 			r.descText.Move(fyne.NewPos(
 				centerX-descSize.Width/2,
-				centerY+10,
+				centerY+10*r.scale,
 			))
 		} else {
 			r.descText.Hide()
@@ -151,7 +161,7 @@ func (r *blockRenderer) positionTextElements(centerX, centerY float32, size fyne
 		// Для прямоугольных блоков - стандартное позиционирование
 		r.iconText.Move(fyne.NewPos(
 			centerX-iconSize.Width/2,
-			centerY-iconSize.Height-10,
+			centerY-iconSize.Height-10*r.scale,
 		))
 
 		r.titleText.Move(fyne.NewPos(
@@ -162,34 +172,34 @@ func (r *blockRenderer) positionTextElements(centerX, centerY float32, size fyne
 		descSize := r.descText.MinSize()
 		r.descText.Move(fyne.NewPos(
 			centerX-descSize.Width/2,
-			centerY+10,
+			centerY+10*r.scale,
 		))
 	}
 }
 
 // MinSize возвращает минимальный размер виджета
 func (r *blockRenderer) MinSize() fyne.Size {
-	// Минимальные размеры для разных типов блоков
+	// Минимальные размеры для разных типов блоков с учетом масштаба
 	var minWidth, minHeight float32
 
 	switch r.shapeType {
 	case ShapeEllipse:
-		minWidth = 120
-		minHeight = 80
+		minWidth = 120 * r.scale
+		minHeight = 80 * r.scale
 	case ShapeHexagon, ShapeHexagonInverted:
-		minWidth = 150
-		minHeight = 100
+		minWidth = 150 * r.scale
+		minHeight = 100 * r.scale
 	case ShapeDiamond:
-		minWidth = 120
-		minHeight = 80
+		minWidth = 120 * r.scale
+		minHeight = 80 * r.scale
 	default: // ShapeRectangle
-		minWidth = 150
-		minHeight = 80
+		minWidth = 150 * r.scale
+		minHeight = 80 * r.scale
 	}
 
 	// Учитываем размер текста
 	titleSize := r.titleText.MinSize()
-	requiredWidth := maxFloat32(minWidth, titleSize.Width+20)
+	requiredWidth := maxFloat32(minWidth, titleSize.Width+20*r.scale)
 	requiredHeight := minHeight
 
 	return fyne.NewSize(requiredWidth, requiredHeight)
@@ -197,6 +207,9 @@ func (r *blockRenderer) MinSize() fyne.Size {
 
 // Refresh обновляет внешний вид рендерера
 func (r *blockRenderer) Refresh() {
+	// Обновляем масштаб
+	r.scale = r.widget.programPanel.GetScale()
+
 	// Обновляем цвета линий
 	r.lineColor = parseColor(r.widget.block.Color)
 
@@ -211,6 +224,11 @@ func (r *blockRenderer) Refresh() {
 	r.titleText.Text = r.widget.block.Title
 	r.descText.Text = r.widget.block.Description
 	r.iconText.Text = getBlockIcon(r.widget.block.Type)
+
+	// Обновляем размеры текста
+	r.iconText.TextSize = 20 * r.scale
+	r.titleText.TextSize = 14 * r.scale
+	r.descText.TextSize = 10 * r.scale
 
 	// Показываем/скрываем описание
 	if len(r.widget.block.Description) > 0 {
@@ -227,16 +245,16 @@ func (r *blockRenderer) Refresh() {
 
 // updateLineStyles обновляет стили линий в зависимости от состояния
 func (r *blockRenderer) updateLineStyles() {
-	var strokeWidth float32 = 2.0
+	var strokeWidth float32 = 2.0 * r.scale
 	var strokeColor color.Color = r.lineColor
 
 	if r.executing {
 		// Выполняющийся блок - толстые зеленые линии
-		strokeWidth = 4.0
+		strokeWidth = 4.0 * r.scale
 		strokeColor = color.NRGBA{R: 0, G: 255, B: 0, A: 255}
 	} else if r.highlighted {
 		// Выделенный блок - толстые желтые линии
-		strokeWidth = 3.0
+		strokeWidth = 3.0 * r.scale
 		strokeColor = color.NRGBA{R: 255, G: 215, B: 0, A: 255}
 	}
 

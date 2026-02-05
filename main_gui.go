@@ -48,6 +48,10 @@ type MainGUI struct {
 
 	// Кнопки блоков для управления их состоянием
 	blockButtons map[BlockType]*widget.Button
+
+	// Элементы управления масштабированием
+	zoomControls *fyne.Container
+	scaleLabel   *widget.Label
 }
 
 // NewMainGUI создает новый GUI
@@ -111,17 +115,7 @@ func (gui *MainGUI) highlightExecutingBlock(blockID int) {
 		gui.programPanel.HighlightExecutingBlock(blockID)
 
 		// Прокручиваем панель, чтобы блок был виден
-		gui.scrollToBlock(block)
-	}
-}
-
-// Метод для прокрутки к блоку
-func (gui *MainGUI) scrollToBlock(block *ProgramBlock) {
-	if gui.programPanel != nil && gui.programPanel.scroll != nil {
-		// Прокручиваем к позиции блока
-		pos := fyne.NewPos(float32(block.X)-100, float32(block.Y)-100)
-		gui.programPanel.scroll.Offset = pos
-		gui.programPanel.scroll.Refresh()
+		gui.programPanel.scrollToBlock(block)
 	}
 }
 
@@ -133,6 +127,9 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	gui.propertiesPanel = gui.createPropertiesPanel()
 	gui.blocksPanel = gui.createBlocksPanel()
 	gui.programPanel = NewProgramPanel(gui, gui.programMgr)
+
+	// Создаем элементы управления масштабированием
+	gui.createZoomControls()
 
 	// Левая панель: устройства + разделитель + блоки
 	leftPanel := container.NewVBox(
@@ -148,9 +145,9 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	rightSplit := container.NewHSplit(leftSplit, gui.propertiesPanel)
 	rightSplit.SetOffset(0.75)
 
-	// Основной макет
+	// Основной макет с элементами управления масштабированием
 	mainContainer := container.NewBorder(
-		toolbar,
+		container.NewVBox(toolbar, gui.zoomControls), // Добавляем zoomControls под toolbar
 		nil,
 		nil,
 		nil,
@@ -164,6 +161,58 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	gui.addInitialBlocks()
 
 	return mainContainer
+}
+
+// createZoomControls создает элементы управления масштабированием
+func (gui *MainGUI) createZoomControls() {
+	// Создаем кнопки и метку
+	zoomOutButton := widget.NewButtonWithIcon("", theme.ZoomOutIcon(), func() {
+		if gui.programPanel != nil {
+			gui.programPanel.ZoomOut()
+			gui.updateScaleLabel()
+		}
+	})
+	zoomOutButton.Importance = widget.LowImportance
+
+	zoomInButton := widget.NewButtonWithIcon("", theme.ZoomInIcon(), func() {
+		if gui.programPanel != nil {
+			gui.programPanel.ZoomIn()
+			gui.updateScaleLabel()
+		}
+	})
+	zoomInButton.Importance = widget.LowImportance
+
+	resetZoomButton := widget.NewButtonWithIcon("100%", theme.ViewRestoreIcon(), func() {
+		if gui.programPanel != nil {
+			gui.programPanel.ResetZoom()
+			gui.updateScaleLabel()
+		}
+	})
+	resetZoomButton.Importance = widget.LowImportance
+
+	// Метка для отображения текущего масштаба
+	gui.scaleLabel = widget.NewLabel("100%")
+	gui.scaleLabel.Alignment = fyne.TextAlignCenter
+	gui.scaleLabel.TextStyle.Bold = true
+
+	// Создаем контейнер для элементов управления масштабированием
+	gui.zoomControls = container.NewHBox(
+		widget.NewLabel("Масштаб:"),
+		zoomOutButton,
+		resetZoomButton,
+		zoomInButton,
+		gui.scaleLabel,
+		layout.NewSpacer(),
+	)
+}
+
+// updateScaleLabel обновляет метку масштаба
+func (gui *MainGUI) updateScaleLabel() {
+	if gui.programPanel != nil && gui.scaleLabel != nil {
+		scale := gui.programPanel.GetScale()
+		gui.scaleLabel.SetText(fmt.Sprintf("%.0f%%", scale*100))
+		gui.scaleLabel.Refresh()
+	}
 }
 
 // deleteSelectedBlock удаляет выбранный блок
@@ -940,5 +989,146 @@ func (gui *MainGUI) addInitialBlocks() {
 
 		// Обновляем состояние кнопок
 		gui.updateBlockButtonsState()
+	}
+}
+
+// setupKeyboardShortcuts настраивает горячие клавиши
+func (gui *MainGUI) setupKeyboardShortcuts() {
+	// Обработка Delete/Backspace для удаления выделенного блока
+	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
+		switch event.Name {
+		case fyne.KeyDelete, fyne.KeyBackspace:
+			if gui.selectedBlock != nil {
+				gui.deleteSelectedBlock()
+			}
+
+		case fyne.KeyEscape: // Escape - снять выделение
+			if gui.selectedBlock != nil {
+				gui.selectedBlock = nil
+				gui.programPanel.SetSelectedBlock(nil)
+				gui.clearPropertiesPanel()
+			}
+
+		case fyne.KeySpace: // Space - запуск/остановка программы
+			gui.handleSpaceKey()
+
+		case fyne.KeyF5: // F5 - запуск программы
+			if gui.toolbar != nil && gui.toolbar.runButton != nil && !gui.toolbar.runButton.Disabled() {
+				gui.handleRunButton()
+			}
+
+		case fyne.KeyF6: // F6 - остановка программы
+			if gui.toolbar != nil && gui.toolbar.stopButton != nil && !gui.toolbar.stopButton.Disabled() {
+				gui.handleStopButton()
+			}
+
+		case fyne.KeyF1: // F1 - справка
+			if gui.toolbar != nil {
+				gui.toolbar.showHelp()
+			}
+
+		case fyne.KeyEqual, fyne.KeyPlus: // + для увеличения масштаба (без Ctrl)
+			if gui.programPanel != nil {
+				gui.programPanel.ZoomIn()
+				gui.updateScaleLabel()
+			}
+
+		case fyne.KeyMinus: // - для уменьшения масштаба (без Ctrl)
+			if gui.programPanel != nil {
+				gui.programPanel.ZoomOut()
+				gui.updateScaleLabel()
+			}
+
+		case fyne.Key0: // 0 для сброса масштаба (без Ctrl)
+			if fyne.KeyModifier(event.Physical.ScanCode) == fyne.KeyModifierControl {
+				// Ctrl+0 тоже работает для сброса масштаба
+				if gui.programPanel != nil {
+					gui.programPanel.ResetZoom()
+					gui.updateScaleLabel()
+				}
+			} else {
+				// Просто 0 без модификаторов
+				if gui.programPanel != nil {
+					gui.programPanel.ResetZoom()
+					gui.updateScaleLabel()
+				}
+			}
+		}
+	})
+}
+
+// handleRunButton обрабатывает запуск программы
+func (gui *MainGUI) handleRunButton() {
+	if gui.programMgr == nil {
+		return
+	}
+
+	log.Println("Запуск программы...")
+
+	// Проверяем, есть ли блок "Начать"
+	hasStartBlock := false
+	for _, block := range gui.programMgr.program.Blocks {
+		if block.Type == BlockTypeStart {
+			hasStartBlock = true
+			break
+		}
+	}
+
+	if !hasStartBlock {
+		dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Начать'"), gui.window)
+		return
+	}
+
+	// Проверяем, есть ли блок "Стоп"
+	hasStopBlock := false
+	for _, block := range gui.programMgr.program.Blocks {
+		if block.Type == BlockTypeStop {
+			hasStopBlock = true
+			break
+		}
+	}
+
+	if !hasStopBlock {
+		dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Стоп'"), gui.window)
+		return
+	}
+
+	err := gui.programMgr.RunProgram()
+	if err != nil {
+		log.Printf("Ошибка запуска программы: %v", err)
+		dialog.ShowError(err, gui.window)
+	} else {
+		log.Println("Программа успешно запущена")
+		// Обновляем состояние кнопок
+		gui.updateToolbarState()
+	}
+}
+
+// handleStopButton обрабатывает остановку программы
+func (gui *MainGUI) handleStopButton() {
+	if gui.programMgr != nil {
+		gui.programMgr.StopProgram()
+		log.Println("Программа остановлена")
+	}
+}
+
+// handleSpaceKey обрабатывает нажатие Space для запуска/остановки
+func (gui *MainGUI) handleSpaceKey() {
+	if gui.toolbar == nil || gui.programMgr == nil {
+		return
+	}
+
+	isRunning := gui.programMgr.GetProgramState() == ProgramStateRunning
+
+	if !isRunning {
+		// Если программа не запущена, пытаемся запустить
+		if gui.toolbar.runButton != nil && !gui.toolbar.runButton.Disabled() {
+			gui.handleRunButton()
+		}
+	} else {
+		// Если программа запущена, останавливаем
+		if gui.toolbar.stopButton != nil && !gui.toolbar.stopButton.Disabled() {
+			gui.handleStopButton()
+		}
 	}
 }

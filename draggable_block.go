@@ -12,22 +12,24 @@ import (
 // DraggableBlock кастомный виджет блока программирования
 type DraggableBlock struct {
 	widget.BaseWidget
-	block       *ProgramBlock
-	programMgr  *ProgramManager
-	gui         *MainGUI
-	isSelected  bool
-	isExecuting bool
+	block        *ProgramBlock
+	programMgr   *ProgramManager
+	gui          *MainGUI
+	programPanel *ProgramPanel // Ссылка на родительскую панель
+	isSelected   bool
+	isExecuting  bool
 }
 
 // NewDraggableBlock создает новый кастомный блок
-func NewDraggableBlock(block *ProgramBlock, programMgr *ProgramManager, gui *MainGUI) *DraggableBlock {
+func NewDraggableBlock(block *ProgramBlock, programMgr *ProgramManager, gui *MainGUI, programPanel *ProgramPanel) *DraggableBlock {
 	d := &DraggableBlock{
-		block:      block,
-		programMgr: programMgr,
-		gui:        gui,
+		block:        block,
+		programMgr:   programMgr,
+		gui:          gui,
+		programPanel: programPanel,
 	}
 
-	// Устанавливаем размер блока
+	// Устанавливаем размер блока с учетом базовых размеров
 	block.Width = 180
 	block.Height = 100
 
@@ -54,7 +56,7 @@ func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
 
 	// Устанавливаем выбранный блок в GUI
 	d.gui.selectedBlock = d.block
-	d.gui.programPanel.SetSelectedBlock(d.block)
+	d.programPanel.SetSelectedBlock(d.block)
 
 	// Показываем свойства блока
 	d.gui.showBlockProperties(d.block)

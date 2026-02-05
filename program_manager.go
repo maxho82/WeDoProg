@@ -122,8 +122,8 @@ func (pm *ProgramManager) CreateBlock(blockType BlockType, x, y float64) *Progra
 		Type:        blockType,
 		X:           x,
 		Y:           y,
-		Width:       150,
-		Height:      80,
+		Width:       180,                          // Увеличиваем ширину для лучшей читаемости
+		Height:      100,                          // Увеличиваем высоту для лучшей читаемости
 		Parameters:  make(map[string]interface{}), // Инициализируем здесь!
 		IsStart:     (blockType == BlockTypeStart),
 		NextBlockID: 0,
