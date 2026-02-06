@@ -3,7 +3,6 @@ package main
 import (
 	"image/color"
 	"log"
-	"math"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -16,12 +15,11 @@ type ProgramPanel struct {
 	scroll        *container.Scroll
 	content       *fyne.Container
 	programMgr    *ProgramManager
+	layout        *ProgramLayout
 	connections   []*ConnectionLine
 	blockWidgets  map[int]*DraggableBlock
-	selectedBlock *ProgramBlock // Выбранный блок для выделения
+	selectedBlock *ProgramBlock
 	scale         float32
-	baseWidth     float32 // Базовая ширина холста
-	baseHeight    float32 // Базовая высота холста
 }
 
 // ConnectionLine линия соединения между блоками
@@ -39,25 +37,19 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 		programMgr:   programMgr,
 		connections:  make([]*ConnectionLine, 0),
 		blockWidgets: make(map[int]*DraggableBlock),
-		scale:        1.0, // Начальный масштаб 100%
-		baseWidth:    2000,
-		baseHeight:   2000,
+		scale:        1.0,
 	}
 
-	// Создаем основной контейнер с прозрачным фоном
-	panel.content = container.NewWithoutLayout()
-	panel.content.Resize(fyne.NewSize(panel.baseWidth, panel.baseHeight))
+	// Создаем кастомный layout
+	panel.layout = NewProgramLayout(programMgr, panel)
+	panel.layout.SetScale(panel.scale)
 
-	// Создаем скролл-контейнер с поддержкой прокрутки мышью
+	// Создаем контейнер С layout, а не WithoutLayout!
+	panel.content = container.New(panel.layout)
+
+	// Создаем скролл-контейнер
 	panel.scroll = container.NewScroll(panel.content)
-	panel.scroll.SetMinSize(fyne.NewSize(400, 300)) // Минимальный размер для скролла
-
-	// Включаем прокрутку колесиком мыши
-	panel.scroll.OnScrolled = func(pos fyne.Position) {
-		// Обработка прокрутки колесиком мыши
-		panel.scroll.Offset = pos
-		panel.scroll.Refresh()
-	}
+	panel.scroll.SetMinSize(fyne.NewSize(400, 300))
 
 	return panel
 }
@@ -67,7 +59,7 @@ func (p *ProgramPanel) GetContainer() fyne.CanvasObject {
 	return p.scroll
 }
 
-// AddBlock добавляет блок на холст с учетом выделенного блока
+// AddBlock добавляет блок на холст
 func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 	// Проверяем, не добавлен ли уже блок
 	if _, exists := p.blockWidgets[block.ID]; exists {
@@ -77,7 +69,6 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 
 	// Проверяем особые случаи для блоков "Начать" и "Стоп"
 	if block.Type == BlockTypeStart {
-		// Проверяем, есть ли уже блок "Начать"
 		for _, b := range p.programMgr.program.Blocks {
 			if b.Type == BlockTypeStart {
 				log.Println("Блок 'Начать' уже существует в программе")
@@ -85,7 +76,6 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 			}
 		}
 	} else if block.Type == BlockTypeStop {
-		// Проверяем, есть ли уже блок "Стоп"
 		for _, b := range p.programMgr.program.Blocks {
 			if b.Type == BlockTypeStop {
 				log.Println("Блок 'Стоп' уже существует в программе")
@@ -97,86 +87,62 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 	// Определяем индекс вставки в программу
 	insertIndex := p.calculateInsertIndex()
 
-	log.Printf("Вставка блока %d на позицию %d (всего блоков: %d)",
-		block.ID, insertIndex, len(p.programMgr.program.Blocks))
+	log.Printf("Вставка блока %d на позицию %d", block.ID, insertIndex)
 
-	// Вставляем блок в программу по правильному индексу
+	// Вставляем блок в программу
 	p.insertBlockToProgram(block, insertIndex)
 
-	// Пересчитываем позиции всех блоков
-	p.repositionAllBlocks()
-
-	// Создаем виджет блока с учетом текущего масштаба
+	// Создаем виджет блока
 	blockWidget := NewDraggableBlock(block, p.programMgr, p.gui, p)
 
-	// Применяем масштаб к размеру блока
-	scaledWidth := float32(block.Width) * p.scale
-	scaledHeight := float32(block.Height) * p.scale
-	scaledX := float32(block.X) * p.scale
-	scaledY := float32(block.Y) * p.scale
-
-	blockWidget.Resize(fyne.NewSize(scaledWidth, scaledHeight))
-	blockWidget.Move(fyne.NewPos(scaledX, scaledY))
+	// Устанавливаем начальный размер
+	blockWidget.Resize(fyne.NewSize(float32(block.Width), float32(block.Height)))
 
 	// Добавляем на панель
 	p.content.Add(blockWidget)
 	p.blockWidgets[block.ID] = blockWidget
 
-	// Обновляем ВСЕ связи (после того как виджет создан)
-	p.updateAllConnections()
-
-	// Автоматически расширяем холст при необходимости
-	p.ensureCanvasSize()
-
+	// Обновляем layout (это автоматически расставит блоки)
 	p.content.Refresh()
 
-	log.Printf("Блок добавлен на холст: %s (ID: %d) на позиции (%.0f, %.0f)",
-		block.Title, block.ID, block.X, block.Y)
+	// Обновляем соединения
+	p.updateAllConnections()
+
+	log.Printf("Блок добавлен на холст: %s (ID: %d)", block.Title, block.ID)
 }
 
 // calculateInsertIndex вычисляет индекс вставки нового блока
 func (p *ProgramPanel) calculateInsertIndex() int {
-	// Если нет блоков в программе, вставляем в начало
 	if len(p.programMgr.program.Blocks) == 0 {
 		return 0
 	}
 
-	// Если нет выделенного блока
 	if p.selectedBlock == nil {
-		// Ищем блок "Стоп"
 		for i, block := range p.programMgr.program.Blocks {
 			if block.Type == BlockTypeStop {
-				return i // Вставляем перед блоком "Стоп"
+				return i
 			}
 		}
-		// Если нет блока "Стоп", вставляем в конец
 		return len(p.programMgr.program.Blocks)
 	}
 
-	// Определяем логику вставки в зависимости от типа выбранного блока
 	switch p.selectedBlock.Type {
 	case BlockTypeLoopStart:
-		// Если выбран блок начала цикла, вставляем после него (в тело цикла)
 		for i, block := range p.programMgr.program.Blocks {
 			if block.ID == p.selectedBlock.ID {
-				// Находим конец цикла, если есть
 				loopEndID, found := p.programMgr.FindLoopEndID(block.ID)
 				if found {
-					// Ищем индекс конца цикла
 					for j, b := range p.programMgr.program.Blocks {
 						if b.ID == loopEndID {
-							// Вставляем перед концом цикла
 							return j
 						}
 					}
 				}
-				// Если конца цикла нет, вставляем после начала
 				return i + 1
 			}
 		}
 
 	case BlockTypeLoopEnd:
-		// Если выбран блок конца цикла, вставляем после него (после цикла)
 		for i, block := range p.programMgr.program.Blocks {
 			if block.ID == p.selectedBlock.ID {
 				return i + 1
@@ -184,7 +150,6 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 		}
 
 	case BlockTypeStop:
-		// Если выбран блок "Стоп", вставляем перед ним
 		for i, block := range p.programMgr.program.Blocks {
 			if block.ID == p.selectedBlock.ID {
 				return i
@@ -192,7 +157,6 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 		}
 
 	default:
-		// Для остальных блоков вставляем после выбранного
 		for i, block := range p.programMgr.program.Blocks {
 			if block.ID == p.selectedBlock.ID {
 				return i + 1
@@ -200,36 +164,32 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 		}
 	}
 
-	// По умолчанию вставляем в конец
 	return len(p.programMgr.program.Blocks)
 }
 
-// repositionAllBlocks перепозиционирует все блоки после вставки
-func (p *ProgramPanel) repositionAllBlocks() {
-	// Располагаем блоки вертикально с отступами
-	currentY := 50.0
-
-	for _, block := range p.programMgr.program.Blocks {
-		// ВСЕ блоки имеют одинаковый отступ - убираем смещение для циклов
-		block.X = 100
-		block.Y = currentY
-
-		// Обновляем позицию виджета, если он существует
-		if widget, exists := p.blockWidgets[block.ID]; exists {
-			scaledX := float32(block.X) * p.scale
-			scaledY := float32(block.Y) * p.scale
-			widget.Move(fyne.NewPos(scaledX, scaledY))
-		}
-
-		currentY += block.Height + 40
+// insertBlockToProgram вставляет блок в программу по указанному индексу
+func (p *ProgramPanel) insertBlockToProgram(block *ProgramBlock, index int) {
+	if index < 0 {
+		index = 0
 	}
+	if index > len(p.programMgr.program.Blocks) {
+		index = len(p.programMgr.program.Blocks)
+	}
+
+	if index == len(p.programMgr.program.Blocks) {
+		p.programMgr.program.Blocks = append(p.programMgr.program.Blocks, block)
+	} else {
+		p.programMgr.program.Blocks = append(p.programMgr.program.Blocks[:index],
+			append([]*ProgramBlock{block}, p.programMgr.program.Blocks[index:]...)...)
+	}
+
+	log.Printf("Блок %d вставлен в программу на позицию %d", block.ID, index)
 }
 
 // updateAllConnections обновляет все связи между блоками
 func (p *ProgramPanel) updateAllConnections() {
 	// Очищаем все существующие визуальные соединения
 	for _, conn := range p.connections {
-		// Удаляем линию из контейнера
 		for i, obj := range p.content.Objects {
 			if obj == conn.line {
 				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
@@ -247,20 +207,16 @@ func (p *ProgramPanel) updateAllConnections() {
 		currentBlock := p.programMgr.program.Blocks[i]
 		nextBlock := p.programMgr.program.Blocks[i+1]
 
-		// Устанавливаем связь в блоке
 		currentBlock.NextBlockID = nextBlock.ID
 
-		// Добавляем соединение в менеджер
 		p.programMgr.program.Connections = append(p.programMgr.program.Connections, &Connection{
 			FromBlockID: currentBlock.ID,
 			ToBlockID:   nextBlock.ID,
 		})
 
-		// Создаем визуальное соединение
 		p.createVisualConnection(currentBlock.ID, nextBlock.ID)
 	}
 
-	// У последнего блока нет следующего
 	if len(p.programMgr.program.Blocks) > 0 {
 		lastBlock := p.programMgr.program.Blocks[len(p.programMgr.program.Blocks)-1]
 		lastBlock.NextBlockID = 0
@@ -269,7 +225,6 @@ func (p *ProgramPanel) updateAllConnections() {
 
 // createVisualConnection создает визуальное соединение между блоками
 func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
-	// Получаем виджеты блоков
 	fromWidget, fromExists := p.blockWidgets[fromBlockID]
 	toWidget, toExists := p.blockWidgets[toBlockID]
 
@@ -278,20 +233,16 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 		return
 	}
 
-	// Получаем позиции коннекторов
 	fromPos := fromWidget.GetBottomConnectorPosition()
 	toPos := toWidget.GetTopConnectorPosition()
 
-	// Создаем линию соединения (синяя по умолчанию)
 	line := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
 	line.Position1 = fromPos
 	line.Position2 = toPos
-	line.StrokeWidth = 2 * p.scale // Масштабируем толщину линии
+	line.StrokeWidth = 2 * p.scale
 
-	// Добавляем линию на панель
 	p.content.Add(line)
 
-	// Сохраняем соединение
 	connection := &ConnectionLine{
 		line:          line,
 		fromBlockID:   fromBlockID,
@@ -306,7 +257,6 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 func (p *ProgramPanel) RemoveBlock(blockID int) {
 	log.Printf("Начинаем удаление блока %d с холста", blockID)
 
-	// Находим блок для удаления
 	var blockToRemove *ProgramBlock
 	for _, block := range p.programMgr.program.Blocks {
 		if block.ID == blockID {
@@ -320,20 +270,16 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 		return
 	}
 
-	// Проверяем, нельзя ли удалять блоки "Начать" и "Стоп"
 	if blockToRemove.Type == BlockTypeStart || blockToRemove.Type == BlockTypeStop {
 		log.Printf("Блок '%s' (ID: %d) нельзя удалять", blockToRemove.Title, blockID)
 		return
 	}
 
-	// Проверяем, является ли блок частью цикла
 	if blockToRemove.Type == BlockTypeLoopStart || blockToRemove.Type == BlockTypeLoopEnd {
-		// Для блоков цикла вызываем специальную функцию в GUI
 		p.gui.deleteLoopWithConfirmation(blockID)
 		return
 	}
 
-	// Находим индекс удаляемого блока
 	removeIndex := -1
 	for i, block := range p.programMgr.program.Blocks {
 		if block.ID == blockID {
@@ -361,46 +307,37 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 
 	// Удаляем виджет блока
 	if blockWidget, exists := p.blockWidgets[blockID]; exists {
-		// Ищем виджет в контейнере и удаляем его
 		for i, obj := range p.content.Objects {
 			if obj == blockWidget {
 				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
 				break
 			}
 		}
-		// Удаляем из карты виджетов
 		delete(p.blockWidgets, blockID)
 	}
 
 	// Удаляем связанные соединения
 	p.removeConnectionsForBlock(blockID)
 
-	// Пересчитываем позиции оставшихся блоков
-	p.repositionAllBlocks()
+	// Обновляем layout
+	p.content.Refresh()
 
 	// Обновляем все связи
 	p.updateAllConnections()
 
-	// Если удалили выбранный блок, сбрасываем выделение
 	if p.selectedBlock != nil && p.selectedBlock.ID == blockID {
 		p.selectedBlock = nil
 		p.gui.selectedBlock = nil
 		p.ResetHighlight()
 	}
 
-	// Обновляем размер холста
-	p.ensureCanvasSize()
-
-	p.content.Refresh()
-
 	log.Printf("Блок %d удален с холста. Осталось блоков: %d", blockID, len(p.programMgr.program.Blocks))
 }
 
-// RemoveBlockInternal - внутренний метод для удаления блока без проверок (используется при удалении циклов)
+// RemoveBlockInternal - внутренний метод для удаления блока без проверок
 func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 	log.Printf("Внутреннее удаление блока %d", blockID)
 
-	// Находим блок для удаления
 	var blockToRemove *ProgramBlock
 	var removeIndex = -1
 
@@ -417,7 +354,6 @@ func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 		return
 	}
 
-	// Удаляем блок из программы
 	if removeIndex == 0 {
 		p.programMgr.program.Blocks = p.programMgr.program.Blocks[1:]
 	} else if removeIndex == len(p.programMgr.program.Blocks)-1 {
@@ -429,23 +365,18 @@ func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 		)
 	}
 
-	// Удаляем виджет блока
 	if blockWidget, exists := p.blockWidgets[blockID]; exists {
-		// Ищем виджет в контейнере и удаляем его
 		for i, obj := range p.content.Objects {
 			if obj == blockWidget {
 				p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
 				break
 			}
 		}
-		// Удаляем из карты виджетов
 		delete(p.blockWidgets, blockID)
 	}
 
-	// Удаляем связанные соединения
 	p.removeConnectionsForBlock(blockID)
 
-	// Если удалили выбранный блок, сбрасываем выделение
 	if p.selectedBlock != nil && p.selectedBlock.ID == blockID {
 		p.selectedBlock = nil
 		p.gui.selectedBlock = nil
@@ -460,7 +391,6 @@ func (p *ProgramPanel) removeConnectionsForBlock(blockID int) {
 	var newConnections []*ConnectionLine
 	for _, conn := range p.connections {
 		if conn.fromBlockID == blockID || conn.toBlockID == blockID {
-			// Удаляем линию из контейнера
 			for i, obj := range p.content.Objects {
 				if obj == conn.line {
 					p.content.Objects = append(p.content.Objects[:i], p.content.Objects[i+1:]...)
@@ -476,23 +406,18 @@ func (p *ProgramPanel) removeConnectionsForBlock(blockID int) {
 
 // Clear очищает холст
 func (p *ProgramPanel) Clear() {
-	// Очищаем все объекты
 	p.content.Objects = nil
 	p.connections = make([]*ConnectionLine, 0)
 	p.blockWidgets = make(map[int]*DraggableBlock)
 	p.selectedBlock = nil
-
-	// Восстанавливаем базовый размер холста
-	p.content.Resize(fyne.NewSize(p.baseWidth, p.baseHeight))
 	p.content.Refresh()
 }
 
-// HighlightConnections выделяет соединение, в которое будет вставлен новый блок
+// HighlightConnections выделяет соединение
 func (p *ProgramPanel) HighlightConnections(block *ProgramBlock) {
-	// Сбрасываем выделение всех линий
 	for _, conn := range p.connections {
 		conn.isHighlighted = false
-		conn.line.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255} // Синий
+		conn.line.StrokeColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255}
 		conn.line.StrokeWidth = 2 * p.scale
 	}
 
@@ -501,14 +426,13 @@ func (p *ProgramPanel) HighlightConnections(block *ProgramBlock) {
 		return
 	}
 
-	// В дракон-схеме подсвечиваем связь, которая идет ОТ выбранного блока (кроме блока "Стоп" и конца цикла)
 	if block.Type != BlockTypeStop && block.Type != BlockTypeLoopEnd {
 		for _, conn := range p.connections {
 			if conn.fromBlockID == block.ID {
 				conn.isHighlighted = true
-				conn.line.StrokeColor = color.NRGBA{R: 255, G: 215, B: 0, A: 255} // Золотой
+				conn.line.StrokeColor = color.NRGBA{R: 255, G: 215, B: 0, A: 255}
 				conn.line.StrokeWidth = 3 * p.scale
-				break // только одну связь
+				break
 			}
 		}
 	}
@@ -533,18 +457,15 @@ func (p *ProgramPanel) GetBlockWidget(blockID int) *DraggableBlock {
 
 // SetSelectedBlock устанавливает выбранный блок
 func (p *ProgramPanel) SetSelectedBlock(block *ProgramBlock) {
-	// Сбрасываем выделение со всех блоков
 	for _, widget := range p.blockWidgets {
 		widget.SetSelected(false)
 	}
 
 	p.selectedBlock = block
 	if block != nil {
-		// Выделяем выбранный блок
 		if widget, exists := p.blockWidgets[block.ID]; exists {
 			widget.SetSelected(true)
 		}
-		// Подсвечиваем соответствующую связь
 		p.HighlightConnections(block)
 	} else {
 		p.ResetHighlight()
@@ -554,12 +475,10 @@ func (p *ProgramPanel) SetSelectedBlock(block *ProgramBlock) {
 // updateConnections обновляет позиции всех соединений
 func (p *ProgramPanel) updateConnections() {
 	for _, conn := range p.connections {
-		// Получаем виджеты блоков
 		fromWidget, fromExists := p.blockWidgets[conn.fromBlockID]
 		toWidget, toExists := p.blockWidgets[conn.toBlockID]
 
 		if fromExists && toExists {
-			// Обновляем позиции линии
 			fromPos := fromWidget.GetBottomConnectorPosition()
 			toPos := toWidget.GetTopConnectorPosition()
 
@@ -574,31 +493,9 @@ func (p *ProgramPanel) updateConnections() {
 	}
 }
 
-// insertBlockToProgram вставляет блок в программу по указанному индексу
-func (p *ProgramPanel) insertBlockToProgram(block *ProgramBlock, index int) {
-	// Проверяем корректность индекса
-	if index < 0 {
-		index = 0
-	}
-	if index > len(p.programMgr.program.Blocks) {
-		index = len(p.programMgr.program.Blocks)
-	}
-
-	// Вставляем блок в срез
-	if index == len(p.programMgr.program.Blocks) {
-		p.programMgr.program.Blocks = append(p.programMgr.program.Blocks, block)
-	} else {
-		p.programMgr.program.Blocks = append(p.programMgr.program.Blocks[:index],
-			append([]*ProgramBlock{block}, p.programMgr.program.Blocks[index:]...)...)
-	}
-
-	log.Printf("Блок %d вставлен в программу на позицию %d", block.ID, index)
-}
-
-// Метод для выделения блока выполнения
+// HighlightExecutingBlock выделяет выполняющийся блок
 func (p *ProgramPanel) HighlightExecutingBlock(blockID int) {
 	if blockID == -1 {
-		// Сбрасываем выделение
 		for _, widget := range p.blockWidgets {
 			widget.SetExecuting(false)
 		}
@@ -606,7 +503,6 @@ func (p *ProgramPanel) HighlightExecutingBlock(blockID int) {
 		return
 	}
 
-	// Находим блок
 	var block *ProgramBlock
 	for _, b := range p.programMgr.program.Blocks {
 		if b.ID == blockID {
@@ -622,145 +518,46 @@ func (p *ProgramPanel) HighlightExecutingBlock(blockID int) {
 
 // highlightBlockAsExecuting выделяет блок как выполняющийся
 func (p *ProgramPanel) highlightBlockAsExecuting(block *ProgramBlock) {
-	// Сбрасываем предыдущее выделение выполнения
 	for _, widget := range p.blockWidgets {
 		widget.SetExecuting(false)
 	}
 
-	// Устанавливаем выделение выполнения для текущего блока
 	if widget, exists := p.blockWidgets[block.ID]; exists {
 		widget.SetExecuting(true)
 	}
 
-	// Также подсвечиваем соответствующую связь
 	p.HighlightConnections(block)
 	p.content.Refresh()
 }
 
-// Удаляем все блоки цикла (включая начало и конец)
+// RemoveLoopBlocks удаляет все блоки цикла
 func (p *ProgramPanel) RemoveLoopBlocks(loopBlocks []*ProgramBlock) {
 	log.Printf("Удаление всех блоков цикла (количество: %d)", len(loopBlocks))
 
-	// Удаляем блоки начиная с конца (чтобы не нарушать индексы)
 	for i := len(loopBlocks) - 1; i >= 0; i-- {
 		block := loopBlocks[i]
 		p.RemoveBlockInternal(block.ID)
 	}
 
-	// Пересчитываем позиции оставшихся блоков
-	p.repositionAllBlocks()
-
-	// Обновляем все связи
-	p.updateAllConnections()
-
-	// Обновляем размер холста
-	p.ensureCanvasSize()
-
 	p.content.Refresh()
-}
-
-// ensureCanvasSize автоматически увеличивает холст при необходимости
-func (p *ProgramPanel) ensureCanvasSize() {
-	if len(p.programMgr.program.Blocks) == 0 {
-		// Если нет блоков, используем базовый размер
-		p.content.Resize(fyne.NewSize(p.baseWidth, p.baseHeight))
-		return
-	}
-
-	// Находим максимальные координаты блоков
-	var maxX, maxY float64
-	for _, block := range p.programMgr.program.Blocks {
-		// Учитываем правый нижний угол блока
-		blockRight := block.X + block.Width
-		blockBottom := block.Y + block.Height
-
-		if blockRight > maxX {
-			maxX = blockRight
-		}
-		if blockBottom > maxY {
-			maxY = blockBottom
-		}
-	}
-
-	// Добавляем отступы (200 пикселей) и применяем масштаб
-	requiredWidth := float32(maxX+200) * p.scale
-	requiredHeight := float32(maxY+200) * p.scale
-
-	// Проверяем, нужно ли увеличить холст
-	currentSize := p.content.Size()
-	if requiredWidth > currentSize.Width || requiredHeight > currentSize.Height {
-		// Увеличиваем холст до нужного размера
-		newWidth := math.Max(float64(currentSize.Width), float64(requiredWidth))
-		newHeight := math.Max(float64(currentSize.Height), float64(requiredHeight))
-
-		p.content.Resize(fyne.NewSize(float32(newWidth), float32(newHeight)))
-		log.Printf("Холст увеличен до: %.0f x %.0f (масштаб: %.2f)", newWidth, newHeight, p.scale)
-
-		// Обновляем скролл
-		p.scroll.Refresh()
-	}
+	p.updateAllConnections()
+	p.content.Refresh()
 }
 
 // ApplyScale применяет масштаб ко всем элементам холста
 func (p *ProgramPanel) ApplyScale(newScale float32) {
 	if newScale < 0.5 || newScale > 3.0 {
-		return // Ограничиваем масштаб
+		return
 	}
 
-	// Сохраняем старый масштаб для вычисления коэффициента
 	oldScale := p.scale
 	p.scale = newScale
 
-	// Масштабируем все блокы
-	for _, block := range p.programMgr.program.Blocks {
-		if widget, exists := p.blockWidgets[block.ID]; exists {
-			// Получаем текущую позицию блока в оригинальных координатах
-			originalX := float32(block.X)
-			originalY := float32(block.Y)
-			originalWidth := float32(block.Width)
-			originalHeight := float32(block.Height)
+	p.layout.SetScale(newScale)
 
-			// Применяем новый масштаб
-			scaledX := originalX * newScale
-			scaledY := originalY * newScale
-			scaledWidth := originalWidth * newScale
-			scaledHeight := originalHeight * newScale
+	// Обновляем layout
+	p.content.Layout.Layout(p.content.Objects, p.content.Size())
 
-			widget.Resize(fyne.NewSize(scaledWidth, scaledHeight))
-			widget.Move(fyne.NewPos(scaledX, scaledY))
-			widget.Refresh()
-		}
-	}
-
-	// Масштабируем и перерисовываем все соединения
-	for _, conn := range p.connections {
-		// Обновляем толщину линии
-		if conn.isHighlighted {
-			conn.line.StrokeWidth = 3 * newScale
-		} else {
-			conn.line.StrokeWidth = 2 * newScale
-		}
-
-		// Получаем виджеты блоков для обновления позиций
-		fromWidget, fromExists := p.blockWidgets[conn.fromBlockID]
-		toWidget, toExists := p.blockWidgets[conn.toBlockID]
-
-		if fromExists && toExists {
-			// Обновляем позиции линии
-			fromPos := fromWidget.GetBottomConnectorPosition()
-			toPos := toWidget.GetTopConnectorPosition()
-
-			conn.line.Position1 = fromPos
-			conn.line.Position2 = toPos
-		}
-
-		conn.line.Refresh()
-	}
-
-	// Обновляем размер холста
-	p.ensureCanvasSize()
-
-	// Обновляем отображение
 	p.content.Refresh()
 	p.scroll.Refresh()
 
@@ -798,23 +595,18 @@ func (p *ProgramPanel) GetScale() float32 {
 // scrollToBlock прокручивает панель к указанному блоку
 func (p *ProgramPanel) scrollToBlock(block *ProgramBlock) {
 	if widget, exists := p.blockWidgets[block.ID]; exists {
-		// Получаем позицию и размер блока
 		pos := widget.Position()
 		size := widget.Size()
 
-		// Вычисляем центр блока
 		centerX := pos.X + size.Width/2
 		centerY := pos.Y + size.Height/2
 
-		// Вычисляем смещение для скролла
 		scrollWidth := p.scroll.Size().Width
 		scrollHeight := p.scroll.Size().Height
 
-		// Центрируем блок в видимой области
 		offsetX := centerX - scrollWidth/2
 		offsetY := centerY - scrollHeight/2
 
-		// Ограничиваем смещение
 		contentSize := p.content.Size()
 		maxOffsetX := contentSize.Width - scrollWidth
 		maxOffsetY := contentSize.Height - scrollHeight
@@ -831,13 +623,12 @@ func (p *ProgramPanel) scrollToBlock(block *ProgramBlock) {
 			offsetY = maxOffsetY
 		}
 
-		// Применяем смещение
 		p.scroll.Offset = fyne.NewPos(offsetX, offsetY)
 		p.scroll.Refresh()
 	}
 }
 
-// RefreshAllConnections обновляет все соединения (используется при изменении масштаба)
+// RefreshAllConnections обновляет все соединения
 func (p *ProgramPanel) RefreshAllConnections() {
 	p.updateConnections()
 	p.content.Refresh()

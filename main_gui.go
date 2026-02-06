@@ -1055,6 +1055,16 @@ func (gui *MainGUI) setupKeyboardShortcuts() {
 			}
 		}
 	})
+
+	// Обработка событий колесика мыши для панели программирования
+	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
+		// Эта функция уже есть выше, но нужно убедиться, что она есть
+	})
+
+	// Дополнительная обработка событий мыши
+	if gui.programPanel != nil && gui.programPanel.scroll != nil {
+		// Можно добавить дополнительную обработку здесь
+	}
 }
 
 // handleRunButton обрабатывает запуск программы
