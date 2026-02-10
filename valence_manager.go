@@ -288,14 +288,8 @@ func (vm *ValenceManager) ShowTempConnection(point *ValencePoint) {
 		return
 	}
 
-	// Создаем временный блок для визуализации
-	tempBlock := vm.createTempBlockForPreview()
-	if tempBlock == nil {
-		return
-	}
-
-	// Рассчитываем позиции для временных связей
-	vm.createTempLinesForPoint(point, tempBlock)
+	// Создаем временные линии для предварительного просмотра
+	vm.createTempLinesForPoint(point) // Убрали tempBlock
 
 	vm.hoveredPoint = point
 	vm.refreshDisplay()
@@ -336,7 +330,7 @@ func (vm *ValenceManager) createTempBlockForPreview() *ProgramBlock {
 }
 
 // createTempLinesForPoint создает временные линии для точки
-func (vm *ValenceManager) createTempLinesForPoint(point *ValencePoint, tempBlock *ProgramBlock) {
+func (vm *ValenceManager) createTempLinesForPoint(point *ValencePoint) {
 	scale := vm.programPanel.GetScale()
 
 	switch point.InsertType {

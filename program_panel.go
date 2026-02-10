@@ -131,14 +131,15 @@ func (p *ProgramPanel) AddBlockAtPosition(block *ProgramBlock, insertIndex int) 
 	}
 
 	// Проверяем особые случаи для блоков "Начать" и "Стоп"
-	if block.Type == BlockTypeStart {
+	switch block.Type {
+	case BlockTypeStart:
 		for _, b := range p.programMgr.program.Blocks {
 			if b.Type == BlockTypeStart {
 				log.Println("Блок 'Начать' уже существует в программе")
 				return
 			}
 		}
-	} else if block.Type == BlockTypeStop {
+	case BlockTypeStop:
 		for _, b := range p.programMgr.program.Blocks {
 			if b.Type == BlockTypeStop {
 				log.Println("Блок 'Стоп' уже существует в программе")
@@ -195,6 +196,7 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 		return len(p.programMgr.program.Blocks)
 	}
 
+	// Используем switch вместо цепочки if-else
 	switch p.selectedBlock.Type {
 	case BlockTypeLoopStart:
 		for i, block := range p.programMgr.program.Blocks {

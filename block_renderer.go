@@ -118,14 +118,14 @@ func (r *blockRenderer) Layout(size fyne.Size) {
 	centerY := size.Height / 2
 
 	// Для эллипса и шестиугольника позиционируем текст по центру
-	r.positionTextElements(centerX, centerY, size)
+	r.positionTextElements(centerX, centerY) //, size
 
 	// Обновляем стили линий в зависимости от состояния
 	r.updateLineStyles()
 }
 
 // positionTextElements позиционирует текстовые элементы
-func (r *blockRenderer) positionTextElements(centerX, centerY float32, size fyne.Size) {
+func (r *blockRenderer) positionTextElements(centerX, centerY float32) { //, size fyne.Size
 	// Обновляем размер текста в соответствии с масштабом
 	r.iconText.TextSize = 20 * r.scale
 	r.titleText.TextSize = 14 * r.scale

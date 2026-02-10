@@ -491,7 +491,8 @@ func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
 
 	// Определяем, какой блок цикла удаляется
 	if block, exists := gui.programMgr.GetBlock(blockID); exists {
-		if block.Type == BlockTypeLoopStart {
+		switch block.Type {
+		case BlockTypeLoopStart:
 			loopStartID = blockID
 			loopStartBlock = block
 			// Находим конец цикла
@@ -499,7 +500,7 @@ func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
 				loopEndID = loopEndIDVal
 				loopEndBlock, _ = gui.programMgr.GetBlock(loopEndID)
 			}
-		} else if block.Type == BlockTypeLoopEnd {
+		case BlockTypeLoopEnd:
 			loopEndID = blockID
 			loopEndBlock = block
 			// Находим начало цикла

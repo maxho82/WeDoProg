@@ -361,12 +361,12 @@ func (dm *DeviceManager) PlayToneAndWait(portID byte, frequency uint16, duration
 	}
 
 	// Проверяем, подключена ли пищалка
-	device, exists := dm.GetDevice(portID)
+	_, exists := dm.GetDevice(portID)
 	if !exists && dm.hubMgr != nil {
 		if hubDevice, hubExists := dm.hubMgr.GetDeviceFromPort(portID); hubExists {
-			device = hubDevice
-			exists = true
-			dm.AddOrUpdateDevice(device)
+			/* 			device = hubDevice
+			   			exists = true */
+			dm.AddOrUpdateDevice(hubDevice)
 		}
 	}
 

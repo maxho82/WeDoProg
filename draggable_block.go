@@ -134,9 +134,9 @@ func (d *DraggableBlock) SetExecuting(executing bool) {
 func (d *DraggableBlock) GetTopConnectorPosition() fyne.Position {
 	pos := d.Position()
 	size := d.Size()
-	shapeType := getShapeType(d.block.Type)
+	//shapeType := getShapeType(d.block.Type)
 
-	topConnector, _ := calculateConnectorPositions(shapeType, pos, size)
+	topConnector, _ := calculateConnectorPositions(pos, size) //shapeType,
 	return topConnector
 }
 
@@ -144,9 +144,9 @@ func (d *DraggableBlock) GetTopConnectorPosition() fyne.Position {
 func (d *DraggableBlock) GetBottomConnectorPosition() fyne.Position {
 	pos := d.Position()
 	size := d.Size()
-	shapeType := getShapeType(d.block.Type)
+	//shapeType := getShapeType(d.block.Type)
 
-	_, bottomConnector := calculateConnectorPositions(shapeType, pos, size)
+	_, bottomConnector := calculateConnectorPositions(pos, size) //  shapeType,
 	return bottomConnector
 }
 

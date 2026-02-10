@@ -96,10 +96,9 @@ func calculateShapeVertices(shapeType BlockShapeType, size fyne.Size) []fyne.Pos
 }
 
 // calculateConnectorPositions вычисляет позиции коннекторов
-func calculateConnectorPositions(shapeType BlockShapeType, pos fyne.Position, size fyne.Size) (topConnector, bottomConnector fyne.Position) {
+func calculateConnectorPositions(pos fyne.Position, size fyne.Size) (topConnector, bottomConnector fyne.Position) {
 	width := size.Width
 	height := size.Height
-
 	// Для всех фигур коннекторы находятся по центру верхней и нижней грани
 	topConnector = fyne.Position{
 		X: pos.X + width/2,
