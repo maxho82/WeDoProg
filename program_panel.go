@@ -20,6 +20,12 @@ type ProgramPanel struct {
 	blockWidgets  map[int]*DraggableBlock
 	selectedBlock *ProgramBlock
 	scale         float32
+
+	// Новые поля для управления валентными точками
+	valenceManager  *ValenceManager
+	valenceOverlay  *fyne.Container // Оверлей для валентных точек и временных линий
+	isInsertMode    bool            // Режим вставки нового блока
+	insertBlockType BlockType       // Тип блока для вставки
 }
 
 // ConnectionLine линия соединения между блоками
@@ -38,6 +44,7 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 		connections:  make([]*ConnectionLine, 0),
 		blockWidgets: make(map[int]*DraggableBlock),
 		scale:        1.0,
+		isInsertMode: false,
 	}
 
 	// Создаем кастомный layout
@@ -47,8 +54,20 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 	// Создаем контейнер С layout, а не WithoutLayout!
 	panel.content = container.New(panel.layout)
 
+	// Создаем менеджер валентных точек
+	panel.valenceManager = NewValenceManager(panel)
+
+	// Создаем оверлей для валентных точек (располагаем поверх основного контента)
+	panel.valenceOverlay = container.NewWithoutLayout(panel.valenceManager.GetContainer())
+
+	// Создаем основной контейнер с наложением
+	mainContainer := container.NewStack(
+		panel.content,
+		panel.valenceOverlay,
+	)
+
 	// Создаем скролл-контейнер
-	panel.scroll = container.NewScroll(panel.content)
+	panel.scroll = container.NewScroll(mainContainer)
 	panel.scroll.SetMinSize(fyne.NewSize(400, 300))
 
 	return panel
@@ -59,8 +78,44 @@ func (p *ProgramPanel) GetContainer() fyne.CanvasObject {
 	return p.scroll
 }
 
-// AddBlock добавляет блок на холст
+// SetInsertMode устанавливает режим вставки нового блока
+func (p *ProgramPanel) SetInsertMode(blockType BlockType) {
+	p.isInsertMode = true
+	p.insertBlockType = blockType
+
+	// Показываем валентные точки для выбранного типа блока
+	p.valenceManager.ShowValencePoints(blockType)
+
+	// Обновляем оверлей
+	p.valenceOverlay.Refresh()
+
+	log.Printf("Режим вставки включен для типа блока: %v", blockType)
+}
+
+// CancelInsertMode отменяет режим вставки
+func (p *ProgramPanel) CancelInsertMode() {
+	p.isInsertMode = false
+	p.insertBlockType = 0
+
+	// Очищаем валентные точки
+	p.valenceManager.ClearPoints()
+
+	// Обновляем оверлей
+	p.valenceOverlay.Refresh()
+
+	log.Println("Режим вставки отменен")
+}
+
+// AddBlock добавляет блок на холст (старый метод для обратной совместимости)
 func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
+	// Для обратной совместимости, если не в режиме вставки
+	if !p.isInsertMode {
+		p.AddBlockAtPosition(block, p.calculateInsertIndex())
+	}
+}
+
+// AddBlockAtPosition добавляет блок на указанную позицию
+func (p *ProgramPanel) AddBlockAtPosition(block *ProgramBlock, insertIndex int) {
 	// Проверяем, не добавлен ли уже блок
 	if _, exists := p.blockWidgets[block.ID]; exists {
 		log.Printf("Блок %d уже добавлен на холст", block.ID)
@@ -84,9 +139,6 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 		}
 	}
 
-	// Определяем индекс вставки в программу
-	insertIndex := p.calculateInsertIndex()
-
 	log.Printf("Вставка блока %d на позицию %d", block.ID, insertIndex)
 
 	// Вставляем блок в программу
@@ -108,10 +160,19 @@ func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
 	// Обновляем соединения
 	p.updateAllConnections()
 
+	// Если был режим вставки, отключаем его
+	if p.isInsertMode {
+		p.CancelInsertMode()
+	}
+
+	// Обновляем состояние кнопок в GUI
+	p.gui.updateToolbarState()
+	p.gui.updateBlockButtonsState()
+
 	log.Printf("Блок добавлен на холст: %s (ID: %d)", block.Title, block.ID)
 }
 
-// calculateInsertIndex вычисляет индекс вставки нового блока
+// calculateInsertIndex вычисляет индекс вставки нового блока (для обратной совместимости)
 func (p *ProgramPanel) calculateInsertIndex() int {
 	if len(p.programMgr.program.Blocks) == 0 {
 		return 0
@@ -410,6 +471,11 @@ func (p *ProgramPanel) Clear() {
 	p.connections = make([]*ConnectionLine, 0)
 	p.blockWidgets = make(map[int]*DraggableBlock)
 	p.selectedBlock = nil
+
+	// Очищаем валентные точки
+	p.valenceManager.ClearPoints()
+	p.valenceOverlay.Refresh()
+
 	p.content.Refresh()
 }
 
@@ -491,6 +557,9 @@ func (p *ProgramPanel) updateConnections() {
 			conn.line.Refresh()
 		}
 	}
+
+	// Обновляем оверлей с валентными точками
+	p.valenceOverlay.Refresh()
 }
 
 // HighlightExecutingBlock выделяет выполняющийся блок
@@ -559,6 +628,13 @@ func (p *ProgramPanel) ApplyScale(newScale float32) {
 	p.content.Layout.Layout(p.content.Objects, p.content.Size())
 
 	p.content.Refresh()
+
+	// Обновляем валентные точки с новым масштабом
+	if p.isInsertMode {
+		p.valenceManager.ShowValencePoints(p.insertBlockType)
+	}
+	p.valenceOverlay.Refresh()
+
 	p.scroll.Refresh()
 
 	log.Printf("Масштаб изменен: %.2f -> %.2f", oldScale, newScale)
@@ -632,4 +708,9 @@ func (p *ProgramPanel) scrollToBlock(block *ProgramBlock) {
 func (p *ProgramPanel) RefreshAllConnections() {
 	p.updateConnections()
 	p.content.Refresh()
+}
+
+// IsInsertMode возвращает состояние режима вставки
+func (p *ProgramPanel) IsInsertMode() bool {
+	return p.isInsertMode
 }

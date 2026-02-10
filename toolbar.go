@@ -21,6 +21,7 @@ type Toolbar struct {
 	saveButton   *widget.Button
 	loadButton   *widget.Button
 	exportButton *widget.Button
+	clearButton  *widget.Button // Добавляем поле для кнопки очистки
 }
 
 // NewToolbar создает новую панель инструментов
@@ -40,8 +41,18 @@ func (t *Toolbar) GetContainer() fyne.CanvasObject {
 
 // UpdateState обновляет состояние кнопок панели инструментов
 func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool) {
+	// Проверяем, не в режиме ли вставки блоков
+	isInInsertMode := false
+	if t.gui != nil && t.gui.programPanel != nil {
+		isInInsertMode = t.gui.programPanel.IsInsertMode()
+	}
+
 	if t.runButton != nil && t.stopButton != nil {
-		if isConnected && hasProgram && !isRunning {
+		if isInInsertMode {
+			// В режиме вставки кнопки запуска/остановки отключены
+			t.runButton.Disable()
+			t.stopButton.Disable()
+		} else if isConnected && hasProgram && !isRunning {
 			t.runButton.Enable()
 			t.stopButton.Disable()
 		} else if isRunning {
@@ -58,12 +69,21 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 	}
 
 	if t.saveButton != nil && t.exportButton != nil {
-		if hasProgram {
+		if hasProgram && !isInInsertMode {
 			t.saveButton.Enable()
 			t.exportButton.Enable()
 		} else {
 			t.saveButton.Disable()
 			t.exportButton.Disable()
+		}
+	}
+
+	// Кнопка очистки доступна только не в режиме вставки и когда есть программа
+	if t.clearButton != nil {
+		if isInInsertMode || !hasProgram {
+			t.clearButton.Disable()
+		} else {
+			t.clearButton.Enable()
 		}
 	}
 }
@@ -162,7 +182,7 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	t.exportButton.Disable()
 
 	// Кнопка очистки
-	clearButton := widget.NewButtonWithIcon("Очистить", theme.DeleteIcon(), func() {
+	t.clearButton = widget.NewButtonWithIcon("Очистить", theme.DeleteIcon(), func() {
 		if t.gui.programMgr != nil {
 			dialog.ShowConfirm("Очистить программу",
 				"Вы уверены, что хотите удалить все блоки программы?",
@@ -175,7 +195,7 @@ func (t *Toolbar) buildUI() *fyne.Container {
 				}, t.gui.window)
 		}
 	})
-	clearButton.Importance = widget.MediumImportance
+	t.clearButton.Importance = widget.MediumImportance
 
 	// Кнопка помощи
 	helpButton := widget.NewButtonWithIcon("Справка", theme.HelpIcon(), func() {
@@ -205,7 +225,7 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		t.loadButton,
 		t.exportButton,
 		widget.NewSeparator(),
-		clearButton,
+		t.clearButton,
 		widget.NewSeparator(),
 		helpButton,
 		layout.NewSpacer(),

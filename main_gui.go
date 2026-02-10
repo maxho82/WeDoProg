@@ -29,6 +29,9 @@ type MainGUI struct {
 	disconnectButton *widget.Button
 	toolbar          *Toolbar
 
+	// Новые поля для управления вставкой
+	insertCancelButton *widget.Button // Кнопка отмены режима вставки
+
 	// Панели
 	devicePanel     *fyne.Container
 	propertiesPanel *container.Scroll
@@ -147,7 +150,7 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 
 	// Основной макет с элементами управления масштабированием
 	mainContainer := container.NewBorder(
-		container.NewVBox(toolbar, gui.zoomControls), // Добавляем zoomControls под toolbar
+		container.NewVBox(toolbar, gui.zoomControls),
 		nil,
 		nil,
 		nil,
@@ -161,6 +164,229 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	gui.addInitialBlocks()
 
 	return mainContainer
+}
+
+// createBlocksPanel создает панель блоков программирования
+func (gui *MainGUI) createBlocksPanel() *container.Scroll {
+	blocksContainer := container.NewVBox()
+
+	// Заголовок
+	title := canvas.NewText("Палитра блоков", color.NRGBA{R: 240, G: 240, B: 240, A: 255})
+	title.TextSize = 16
+	title.TextStyle.Bold = true
+	title.Alignment = fyne.TextAlignCenter
+	blocksContainer.Add(container.NewCenter(title))
+	blocksContainer.Add(widget.NewSeparator())
+
+	// Инициализируем карту кнопок
+	gui.blockButtons = make(map[BlockType]*widget.Button)
+
+	// Категории блоков
+	categories := []struct {
+		name   string
+		blocks []BlockType
+	}{
+		{"Управление", []BlockType{BlockTypeStart, BlockTypeStop}},
+		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoopStart, BlockTypeCondition}},
+		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound}},
+		{"Датчики", []BlockType{BlockTypeTiltSensor, BlockTypeDistanceSensor, BlockTypeVoltageSensor, BlockTypeCurrentSensor}},
+	}
+
+	for _, category := range categories {
+		// Заголовок категории
+		categoryLabel := canvas.NewText(category.name, color.NRGBA{R: 200, G: 200, B: 200, A: 255})
+		categoryLabel.TextSize = 14
+		categoryLabel.TextStyle.Bold = true
+		blocksContainer.Add(categoryLabel)
+
+		// Блоки в категории
+		for _, blockType := range category.blocks {
+			blockName := gui.getBlockName(blockType)
+
+			// Обработчик для блока цикла (создаем два блока)
+			if blockType == BlockTypeLoopStart {
+				blockButton := widget.NewButton(blockName, func() {
+					gui.handleLoopBlockSelection()
+				})
+				blockButton.Importance = widget.LowImportance
+				gui.blockButtons[blockType] = blockButton
+				blocksContainer.Add(blockButton)
+			} else {
+				blockButton := widget.NewButton(blockName, func(bt BlockType) func() {
+					return func() {
+						// Включаем режим вставки вместо непосредственного добавления
+						gui.handleBlockSelection(bt)
+					}
+				}(blockType))
+
+				blockButton.Importance = widget.LowImportance
+
+				// Сохраняем кнопку в карту (кроме блока "Начать" и "Стоп")
+				if blockType != BlockTypeStart && blockType != BlockTypeStop {
+					gui.blockButtons[blockType] = blockButton
+				}
+
+				blocksContainer.Add(blockButton)
+			}
+		}
+
+		blocksContainer.Add(widget.NewSeparator())
+	}
+
+	// Кнопка отмены режима вставки
+	cancelButton := widget.NewButton("Отменить вставку", func() {
+		gui.cancelInsertMode()
+	})
+	cancelButton.Importance = widget.WarningImportance
+	cancelButton.Hide() // Скрыта по умолчанию
+	blocksContainer.Add(cancelButton)
+	gui.insertCancelButton = cancelButton
+
+	scroll := container.NewVScroll(container.NewPadded(blocksContainer))
+	scroll.SetMinSize(fyne.NewSize(220, 400))
+	return scroll
+}
+
+// handleBlockSelection обрабатывает выбор блока для вставки
+func (gui *MainGUI) handleBlockSelection(blockType BlockType) {
+	log.Printf("Выбран блок для вставки: %v", blockType)
+
+	// Включаем режим вставки в programPanel
+	gui.programPanel.SetInsertMode(blockType)
+
+	// Показываем кнопку отмены
+	if gui.insertCancelButton != nil {
+		gui.insertCancelButton.Show()
+	}
+
+	// Обновляем состояние кнопок блоков
+	gui.updateBlockButtonsState()
+}
+
+// handleLoopBlockSelection обрабатывает выбор блока цикла
+func (gui *MainGUI) handleLoopBlockSelection() {
+	log.Println("Создание цикла (начало и конец)...")
+
+	// Для циклов используем старый метод (создаем два блока сразу)
+	gui.createLoopBlocks()
+}
+
+// cancelInsertMode отменяет режим вставки
+func (gui *MainGUI) cancelInsertMode() {
+	log.Println("Отмена режима вставки")
+
+	// Отменяем режим вставки в programPanel
+	gui.programPanel.CancelInsertMode()
+
+	// Скрываем кнопку отмены
+	if gui.insertCancelButton != nil {
+		gui.insertCancelButton.Hide()
+	}
+
+	// Обновляем состояние кнопок блоков
+	gui.updateBlockButtonsState()
+}
+
+// setupKeyboardShortcuts настраивает горячие клавиши
+func (gui *MainGUI) setupKeyboardShortcuts() {
+	// Обработка Delete/Backspace для удаления выделенного блока
+	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
+		switch event.Name {
+		case fyne.KeyDelete, fyne.KeyBackspace:
+			if gui.selectedBlock != nil {
+				gui.deleteSelectedBlock()
+			}
+
+		case fyne.KeyEscape: // Escape - снять выделение или отменить режим вставки
+			if gui.programPanel.IsInsertMode() {
+				gui.cancelInsertMode()
+			} else if gui.selectedBlock != nil {
+				gui.selectedBlock = nil
+				gui.programPanel.SetSelectedBlock(nil)
+				gui.clearPropertiesPanel()
+			}
+
+		case fyne.KeySpace: // Space - запуск/остановка программы
+			gui.handleSpaceKey()
+
+		case fyne.KeyF5: // F5 - запуск программы
+			if gui.toolbar != nil && gui.toolbar.runButton != nil && !gui.toolbar.runButton.Disabled() {
+				gui.handleRunButton()
+			}
+
+		case fyne.KeyF6: // F6 - остановка программы
+			if gui.toolbar != nil && gui.toolbar.stopButton != nil && !gui.toolbar.stopButton.Disabled() {
+				gui.handleStopButton()
+			}
+
+		case fyne.KeyF1: // F1 - справка
+			if gui.toolbar != nil {
+				gui.toolbar.showHelp()
+			}
+
+		case fyne.KeyEqual, fyne.KeyPlus: // + для увеличения масштаба (без Ctrl)
+			if gui.programPanel != nil {
+				gui.programPanel.ZoomIn()
+				gui.updateScaleLabel()
+			}
+
+		case fyne.KeyMinus: // - для уменьшения масштаба (без Ctrl)
+			if gui.programPanel != nil {
+				gui.programPanel.ZoomOut()
+				gui.updateScaleLabel()
+			}
+
+		case fyne.Key0: // 0 для сброса масштаба
+			if gui.programPanel != nil {
+				gui.programPanel.ResetZoom()
+				gui.updateScaleLabel()
+			}
+		}
+	})
+}
+
+// updateBlockButtonsState обновляет состояние кнопок блоков
+func (gui *MainGUI) updateBlockButtonsState() {
+	isInsertMode := gui.programPanel != nil && gui.programPanel.IsInsertMode()
+
+	for _, button := range gui.blockButtons {
+		if isInsertMode {
+			button.Disable()
+		} else {
+			button.Enable()
+		}
+	}
+
+	// Для блоков "Начать" и "Стоп" особая логика
+	if !isInsertMode {
+		hasStartBlock := false
+		hasStopBlock := false
+
+		for _, block := range gui.programMgr.program.Blocks {
+			if block.Type == BlockTypeStart {
+				hasStartBlock = true
+			}
+			if block.Type == BlockTypeStop {
+				hasStopBlock = true
+			}
+		}
+
+		// Если нет блока "Начать", все кнопки (кроме "Начать") должны быть неактивны
+		if !hasStartBlock {
+			for blockType, button := range gui.blockButtons {
+				if blockType != BlockTypeStart {
+					button.Disable()
+				}
+			}
+		}
+
+		// Автоматически создаем блок "Стоп", если есть "Начать" но нет "Стоп"
+		if hasStartBlock && !hasStopBlock {
+			stopBlock := gui.programMgr.CreateBlock(BlockTypeStop, 0, 0)
+			gui.programPanel.AddBlock(stopBlock)
+			log.Println("Автоматически создан блок 'Стоп'")
+		}
+	}
 }
 
 // createZoomControls создает элементы управления масштабированием
@@ -349,87 +575,6 @@ func (gui *MainGUI) createPropertiesPanel() *container.Scroll {
 	return container.NewVScroll(content)
 }
 
-// createBlocksPanel создает панель блоков программирования
-func (gui *MainGUI) createBlocksPanel() *container.Scroll {
-	blocksContainer := container.NewVBox()
-
-	// Заголовок
-	title := canvas.NewText("Палитра блоков", color.NRGBA{R: 240, G: 240, B: 240, A: 255})
-	title.TextSize = 16
-	title.TextStyle.Bold = true
-	title.Alignment = fyne.TextAlignCenter
-	blocksContainer.Add(container.NewCenter(title))
-	blocksContainer.Add(widget.NewSeparator())
-
-	// Инициализируем карту кнопок
-	gui.blockButtons = make(map[BlockType]*widget.Button)
-
-	// Категории блоков (ИЗМЕНЕНО: "Логика" после "Управление")
-	categories := []struct {
-		name   string
-		blocks []BlockType
-	}{
-		{"Управление", []BlockType{BlockTypeStart, BlockTypeStop}},
-		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoopStart, BlockTypeCondition}},
-		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound}},
-		{"Датчики", []BlockType{BlockTypeTiltSensor, BlockTypeDistanceSensor, BlockTypeVoltageSensor, BlockTypeCurrentSensor}},
-	}
-
-	for _, category := range categories {
-		// Заголовок категории
-		categoryLabel := canvas.NewText(category.name, color.NRGBA{R: 200, G: 200, B: 200, A: 255})
-		categoryLabel.TextSize = 14
-		categoryLabel.TextStyle.Bold = true
-		blocksContainer.Add(categoryLabel)
-
-		// Блоки в категории
-		for _, blockType := range category.blocks {
-			blockName := gui.getBlockName(blockType)
-
-			// Обработчик для блока цикла (создаем два блока)
-			if blockType == BlockTypeLoopStart {
-				blockButton := widget.NewButton(blockName, func() {
-					gui.createLoopBlocks()
-				})
-				blockButton.Importance = widget.LowImportance
-				gui.blockButtons[blockType] = blockButton
-				blocksContainer.Add(blockButton)
-			} else {
-				blockButton := widget.NewButton(blockName, func(bt BlockType) func() {
-					return func() {
-						// Создаем блок (позиция будет вычислена в programPanel)
-						block := gui.programMgr.CreateBlock(bt, 0, 0)
-
-						// Добавляем блок на панель программирования
-						gui.programPanel.AddBlock(block)
-
-						// Обновляем состояние кнопок
-						gui.updateBlockButtonsState()
-						gui.updateToolbarState()
-
-						log.Printf("Добавлен новый блок: %s (ID: %d)", block.Title, block.ID)
-					}
-				}(blockType))
-
-				blockButton.Importance = widget.LowImportance
-
-				// Сохраняем кнопку в карту (кроме блока "Начать")
-				if blockType != BlockTypeStart && blockType != BlockTypeStop {
-					gui.blockButtons[blockType] = blockButton
-				}
-
-				blocksContainer.Add(blockButton)
-			}
-		}
-
-		blocksContainer.Add(widget.NewSeparator())
-	}
-
-	scroll := container.NewVScroll(container.NewPadded(blocksContainer))
-	scroll.SetMinSize(fyne.NewSize(220, 400))
-	return scroll
-}
-
 // createLoopBlocks создает два блока для цикла (начало и конец)
 func (gui *MainGUI) createLoopBlocks() {
 	log.Println("Создание цикла (начало и конец)...")
@@ -463,45 +608,6 @@ func (gui *MainGUI) createLoopBlocks() {
 	gui.updateToolbarState()
 
 	log.Printf("Создан цикл: начало (ID: %d) -> конец (ID: %d)", loopStartBlock.ID, loopEndBlock.ID)
-}
-
-// updateBlockButtonsState обновляет состояние кнопок блоков
-func (gui *MainGUI) updateBlockButtonsState() {
-	// Проверяем, есть ли блок "Начать"
-	hasStartBlock := false
-	for _, block := range gui.programMgr.program.Blocks {
-		if block.Type == BlockTypeStart {
-			hasStartBlock = true
-			break
-		}
-	}
-
-	// Проверяем, есть ли блок "Стоп"
-	hasStopBlock := false
-	for _, block := range gui.programMgr.program.Blocks {
-		if block.Type == BlockTypeStop {
-			hasStopBlock = true
-			break
-		}
-	}
-
-	// Если нет блока "Начать", все кнопки блоков (кроме "Начать") должны быть неактивны
-	// Если есть блок "Начать", но нет блока "Стоп", нужно создать блок "Стоп" автоматически
-	if hasStartBlock && !hasStopBlock {
-		// Автоматически создаем блок "Стоп"
-		stopBlock := gui.programMgr.CreateBlock(BlockTypeStop, 0, 0)
-		gui.programPanel.AddBlock(stopBlock)
-		log.Println("Автоматически создан блок 'Стоп'")
-	}
-
-	// Обновляем состояние кнопок
-	for _, button := range gui.blockButtons {
-		if hasStartBlock {
-			button.Enable()
-		} else {
-			button.Disable()
-		}
-	}
 }
 
 // getBlockName возвращает имя блока по типу
@@ -989,81 +1095,6 @@ func (gui *MainGUI) addInitialBlocks() {
 
 		// Обновляем состояние кнопок
 		gui.updateBlockButtonsState()
-	}
-}
-
-// setupKeyboardShortcuts настраивает горячие клавиши
-func (gui *MainGUI) setupKeyboardShortcuts() {
-	// Обработка Delete/Backspace для удаления выделенного блока
-	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
-		switch event.Name {
-		case fyne.KeyDelete, fyne.KeyBackspace:
-			if gui.selectedBlock != nil {
-				gui.deleteSelectedBlock()
-			}
-
-		case fyne.KeyEscape: // Escape - снять выделение
-			if gui.selectedBlock != nil {
-				gui.selectedBlock = nil
-				gui.programPanel.SetSelectedBlock(nil)
-				gui.clearPropertiesPanel()
-			}
-
-		case fyne.KeySpace: // Space - запуск/остановка программы
-			gui.handleSpaceKey()
-
-		case fyne.KeyF5: // F5 - запуск программы
-			if gui.toolbar != nil && gui.toolbar.runButton != nil && !gui.toolbar.runButton.Disabled() {
-				gui.handleRunButton()
-			}
-
-		case fyne.KeyF6: // F6 - остановка программы
-			if gui.toolbar != nil && gui.toolbar.stopButton != nil && !gui.toolbar.stopButton.Disabled() {
-				gui.handleStopButton()
-			}
-
-		case fyne.KeyF1: // F1 - справка
-			if gui.toolbar != nil {
-				gui.toolbar.showHelp()
-			}
-
-		case fyne.KeyEqual, fyne.KeyPlus: // + для увеличения масштаба (без Ctrl)
-			if gui.programPanel != nil {
-				gui.programPanel.ZoomIn()
-				gui.updateScaleLabel()
-			}
-
-		case fyne.KeyMinus: // - для уменьшения масштаба (без Ctrl)
-			if gui.programPanel != nil {
-				gui.programPanel.ZoomOut()
-				gui.updateScaleLabel()
-			}
-
-		case fyne.Key0: // 0 для сброса масштаба (без Ctrl)
-			if fyne.KeyModifier(event.Physical.ScanCode) == fyne.KeyModifierControl {
-				// Ctrl+0 тоже работает для сброса масштаба
-				if gui.programPanel != nil {
-					gui.programPanel.ResetZoom()
-					gui.updateScaleLabel()
-				}
-			} else {
-				// Просто 0 без модификаторов
-				if gui.programPanel != nil {
-					gui.programPanel.ResetZoom()
-					gui.updateScaleLabel()
-				}
-			}
-		}
-	})
-
-	// Обработка событий колесика мыши для панели программирования
-	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
-		// Эта функция уже есть выше, но нужно убедиться, что она есть
-	})
-
-	// Дополнительная обработка событий мыши
-	if gui.programPanel != nil && gui.programPanel.scroll != nil {
-		// Можно добавить дополнительную обработку здесь
 	}
 }
 

@@ -32,25 +32,27 @@ type blockRenderer struct {
 
 // newBlockRenderer создает новый рендерер для блока
 func newBlockRenderer(widget *DraggableBlock) *blockRenderer {
+	scale := widget.programPanel.GetScale()
+
 	r := &blockRenderer{
 		widget:    widget,
 		lineColor: parseColor(widget.block.Color),
 		lineWidth: 2.0,
 		shapeType: getShapeType(widget.block.Type),
-		scale:     widget.programPanel.GetScale(), // Получаем текущий масштаб
+		scale:     scale,
 	}
 
 	// Создаем текстовые элементы с учетом масштаба
 	r.iconText = canvas.NewText(getBlockIcon(widget.block.Type), color.White)
-	r.iconText.TextSize = 20 * r.scale // Масштабируем размер текста
+	r.iconText.TextSize = 20 * scale
 	r.iconText.TextStyle.Bold = true
 
 	r.titleText = canvas.NewText(widget.block.Title, color.White)
-	r.titleText.TextSize = 14 * r.scale // Масштабируем размер текста
+	r.titleText.TextSize = 14 * scale
 	r.titleText.TextStyle.Bold = true
 
 	r.descText = canvas.NewText(widget.block.Description, color.White)
-	r.descText.TextSize = 10 * r.scale // Масштабируем размер текста
+	r.descText.TextSize = 10 * scale
 
 	// Создаем линии для фигуры
 	r.createShapeLines()
@@ -77,7 +79,7 @@ func (r *blockRenderer) createShapeLines() {
 		line := canvas.NewLine(r.lineColor)
 		line.Position1 = vertices[i]
 		line.Position2 = vertices[next]
-		line.StrokeWidth = r.lineWidth * r.scale // Масштабируем толщину линии
+		line.StrokeWidth = r.lineWidth * r.scale
 		r.shapeLines[i] = line
 	}
 }

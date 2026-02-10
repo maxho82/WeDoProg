@@ -55,6 +55,11 @@ func (l *ProgramLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	// Обновляем соединения после изменения позиций
 	if l.panel != nil {
 		l.panel.updateConnections()
+
+		// Если в режиме вставки, обновляем валентные точки
+		if l.panel.IsInsertMode() {
+			l.panel.valenceManager.ShowValencePoints(l.panel.insertBlockType)
+		}
 	}
 }
 
