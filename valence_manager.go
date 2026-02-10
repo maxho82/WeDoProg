@@ -3,6 +3,7 @@ package main
 import (
 	"image/color"
 	"log"
+	"math"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -255,14 +256,28 @@ func (vm *ValenceManager) addPointAfterBlock(block *ProgramBlock) {
 	vm.addPointWidget(point)
 }
 
-// addPointWidget добавляет виджет для валентной точки
+// addPointWidget добавляет виджет для валентной точки с учетом масштаба
 func (vm *ValenceManager) addPointWidget(point *ValencePoint) {
+	scale := vm.programPanel.GetScale()
+
 	pointWidget := NewValencePointWidget(point, vm)
-	pointWidget.Resize(fyne.NewSize(16, 16))
-	pointWidget.Move(fyne.NewPos(point.Position.X-8, point.Position.Y-8))
+
+	// Размер точки должен масштабироваться
+	pointSize := float32(16) * scale
+	pointWidget.Resize(fyne.NewSize(pointSize, pointSize))
+
+	// Позиция должна учитывать смещение для центрирования
+	offset := pointSize / 2
+	pointWidget.Move(fyne.NewPos(
+		point.Position.X-offset,
+		point.Position.Y-offset,
+	))
 
 	vm.container.Add(pointWidget)
 	vm.pointWidgets = append(vm.pointWidgets, pointWidget)
+
+	// Обновляем отображение точки с учетом масштаба
+	pointWidget.Refresh()
 }
 
 // ShowTempConnection показывает временную связь для предварительного просмотра
@@ -383,7 +398,7 @@ func (vm *ValenceManager) createTempLinesForPoint(point *ValencePoint, tempBlock
 	}
 }
 
-// createDashedLine создает эффект пунктирной линии
+// createDashedLine создает эффект пунктирной линии с учетом масштаба
 func (vm *ValenceManager) createDashedLine(baseLine *canvas.Line) {
 	scale := vm.programPanel.GetScale()
 
@@ -396,26 +411,54 @@ func (vm *ValenceManager) createDashedLine(baseLine *canvas.Line) {
 		return
 	}
 
-	// Создаем 10 сегментов (5 пунктирных линий)
-	segmentCount := 10
-	for i := 0; i < segmentCount; i += 2 {
-		// Вычисляем начальную и конечную точку сегмента
-		t1 := float32(i) / float32(segmentCount)
-		t2 := float32(i+1) / float32(segmentCount)
+	// Длина пунктира должна масштабироваться
+	dashLength := float32(10) * scale
+	gapLength := float32(5) * scale
 
-		x1 := baseLine.Position1.X + dx*t1
-		y1 := baseLine.Position1.Y + dy*t1
-		x2 := baseLine.Position1.X + dx*t2
-		y2 := baseLine.Position1.Y + dy*t2
+	// Нормализуем вектор направления
+	normalizedLength := float32(math.Sqrt(float64(length)))
+	if normalizedLength == 0 {
+		return
+	}
 
+	dxNormalized := dx / normalizedLength
+	dyNormalized := dy / normalizedLength
+
+	// Создаем сегменты пунктира
+	currentPos := fyne.Position{X: baseLine.Position1.X, Y: baseLine.Position1.Y}
+	totalLength := normalizedLength
+
+	for currentLength := float32(0); currentLength < totalLength; {
+		// Начало пунктира
+		startX := currentPos.X
+		startY := currentPos.Y
+
+		// Конец пунктира (не более общей длины)
+		dashProgress := minFloat32(dashLength, totalLength-currentLength)
+		endX := startX + dxNormalized*dashProgress
+		endY := startY + dyNormalized*dashProgress
+
+		// Создаем сегмент пунктира
 		segment := canvas.NewLine(color.NRGBA{R: 255, G: 255, B: 0, A: 180})
-		segment.Position1 = fyne.NewPos(x1, y1)
-		segment.Position2 = fyne.NewPos(x2, y2)
+		segment.Position1 = fyne.NewPos(startX, startY)
+		segment.Position2 = fyne.NewPos(endX, endY)
 		segment.StrokeWidth = 2 * scale
 		segment.StrokeColor = color.NRGBA{R: 255, G: 255, B: 0, A: 180}
 
 		vm.container.Add(segment)
 		vm.tempLines = append(vm.tempLines, segment)
+
+		// Перемещаем текущую позицию
+		currentPos = fyne.Position{X: endX, Y: endY}
+		currentLength += dashProgress
+
+		// Добавляем промежуток
+		gapProgress := minFloat32(gapLength, totalLength-currentLength)
+		if gapProgress > 0 {
+			currentPos.X += dxNormalized * gapProgress
+			currentPos.Y += dyNormalized * gapProgress
+			currentLength += gapProgress
+		}
 	}
 }
 
@@ -499,4 +542,89 @@ func (vm *ValenceManager) InsertBlockAtPoint(point *ValencePoint) bool {
 // refreshDisplay обновляет отображение
 func (vm *ValenceManager) refreshDisplay() {
 	vm.container.Refresh()
+}
+
+// UpdatePointsPositions обновляет позиции всех точек при изменении масштаба
+func (vm *ValenceManager) UpdatePointsPositions() {
+	if !vm.programPanel.isInsertMode {
+		return
+	}
+
+	scale := vm.programPanel.GetScale()
+
+	// Пересчитываем позиции для каждой точки
+	for i, point := range vm.points {
+		// Пересчитываем позицию в зависимости от типа точки
+		switch point.InsertType {
+		case ValenceInsertBetween:
+			if point.FromBlock != nil && point.ToBlock != nil {
+				fromWidget := vm.programPanel.GetBlockWidget(point.FromBlock.ID)
+				toWidget := vm.programPanel.GetBlockWidget(point.ToBlock.ID)
+
+				if fromWidget != nil && toWidget != nil {
+					pos1 := fromWidget.GetBottomConnectorPosition()
+					pos2 := toWidget.GetTopConnectorPosition()
+
+					// Пересчитываем с учетом масштаба
+					point.Position = fyne.NewPos(
+						(pos1.X+pos2.X)/2,
+						(pos1.Y+pos2.Y)/2,
+					)
+				}
+			}
+
+		case ValenceInsertStart:
+			if point.ToBlock != nil {
+				toWidget := vm.programPanel.GetBlockWidget(point.ToBlock.ID)
+				if toWidget != nil {
+					point.Position = toWidget.GetTopConnectorPosition()
+				}
+			}
+
+		case ValenceInsertEnd:
+			if point.FromBlock != nil {
+				fromWidget := vm.programPanel.GetBlockWidget(point.FromBlock.ID)
+				if fromWidget != nil {
+					point.Position = fromWidget.GetBottomConnectorPosition()
+				}
+			}
+
+		case ValenceInsertLoop:
+			if point.FromBlock != nil && point.ToBlock != nil {
+				startWidget := vm.programPanel.GetBlockWidget(point.FromBlock.ID)
+				endWidget := vm.programPanel.GetBlockWidget(point.ToBlock.ID)
+
+				if startWidget != nil && endWidget != nil {
+					startPos := startWidget.Position()
+					endPos := endWidget.Position()
+					point.Position = fyne.NewPos(
+						startPos.X+startWidget.Size().Width/2,
+						(startPos.Y+endPos.Y)/2,
+					)
+				}
+			}
+		}
+
+		// Обновляем позицию виджета точки
+		if i < len(vm.pointWidgets) {
+			pointSize := float32(16) * scale
+			offset := pointSize / 2
+			vm.pointWidgets[i].Move(fyne.NewPos(
+				point.Position.X-offset,
+				point.Position.Y-offset,
+			))
+			vm.pointWidgets[i].Resize(fyne.NewSize(pointSize, pointSize))
+			vm.pointWidgets[i].Refresh()
+		}
+	}
+
+	vm.refreshDisplay()
+}
+
+// minFloat32 возвращает минимальное из двух float32
+func minFloat32(a, b float32) float32 {
+	if a < b {
+		return a
+	}
+	return b
 }

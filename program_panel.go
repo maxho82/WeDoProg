@@ -104,6 +104,14 @@ func (p *ProgramPanel) CancelInsertMode() {
 	p.valenceOverlay.Refresh()
 
 	log.Println("Режим вставки отменен")
+
+	// Уведомляем GUI об отмене
+	fyne.Do(func() {
+		if p.gui != nil {
+			p.gui.updateToolbarState()
+			p.gui.updateBlockButtonsState()
+		}
+	})
 }
 
 // AddBlock добавляет блок на холст (старый метод для обратной совместимости)
@@ -632,6 +640,8 @@ func (p *ProgramPanel) ApplyScale(newScale float32) {
 	// Обновляем валентные точки с новым масштабом
 	if p.isInsertMode {
 		p.valenceManager.ShowValencePoints(p.insertBlockType)
+		// Обновляем позиции точек с учетом нового масштаба
+		p.valenceManager.UpdatePointsPositions()
 	}
 	p.valenceOverlay.Refresh()
 

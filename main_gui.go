@@ -235,7 +235,7 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 
 	// Кнопка отмены режима вставки
 	cancelButton := widget.NewButton("Отменить вставку", func() {
-		gui.cancelInsertMode()
+		gui.CancelInsertMode()
 	})
 	cancelButton.Importance = widget.WarningImportance
 	cancelButton.Hide() // Скрыта по умолчанию
@@ -271,12 +271,14 @@ func (gui *MainGUI) handleLoopBlockSelection() {
 	gui.createLoopBlocks()
 }
 
-// cancelInsertMode отменяет режим вставки
-func (gui *MainGUI) cancelInsertMode() {
+// CancelInsertMode отменяет режим вставки
+func (gui *MainGUI) CancelInsertMode() {
 	log.Println("Отмена режима вставки")
 
 	// Отменяем режим вставки в programPanel
-	gui.programPanel.CancelInsertMode()
+	if gui.programPanel != nil {
+		gui.programPanel.CancelInsertMode()
+	}
 
 	// Скрываем кнопку отмены
 	if gui.insertCancelButton != nil {
@@ -285,6 +287,9 @@ func (gui *MainGUI) cancelInsertMode() {
 
 	// Обновляем состояние кнопок блоков
 	gui.updateBlockButtonsState()
+
+	// Обновляем панель инструментов
+	gui.updateToolbarState()
 }
 
 // setupKeyboardShortcuts настраивает горячие клавиши
@@ -299,7 +304,7 @@ func (gui *MainGUI) setupKeyboardShortcuts() {
 
 		case fyne.KeyEscape: // Escape - снять выделение или отменить режим вставки
 			if gui.programPanel.IsInsertMode() {
-				gui.cancelInsertMode()
+				gui.CancelInsertMode()
 			} else if gui.selectedBlock != nil {
 				gui.selectedBlock = nil
 				gui.programPanel.SetSelectedBlock(nil)

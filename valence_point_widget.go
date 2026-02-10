@@ -13,10 +13,10 @@ import (
 // ValencePointWidget виджет валентной точки
 type ValencePointWidget struct {
 	widget.BaseWidget
-	point       *ValencePoint
-	manager     *ValenceManager
-	circle      *canvas.Circle
-	isHovered   bool
+	point     *ValencePoint
+	manager   *ValenceManager
+	circle    *canvas.Circle
+	isHovered bool
 }
 
 // NewValencePointWidget создает виджет валентной точки
@@ -26,14 +26,14 @@ func NewValencePointWidget(point *ValencePoint, manager *ValenceManager) *Valenc
 		manager:   manager,
 		isHovered: false,
 	}
-	
+
 	w.ExtendBaseWidget(w)
-	
+
 	// Создаем круг для отображения точки
 	w.circle = canvas.NewCircle(color.NRGBA{R: 255, G: 215, B: 0, A: 255}) // Золотой
 	w.circle.StrokeWidth = 1
 	w.circle.StrokeColor = color.White
-	
+
 	return w
 }
 
@@ -48,21 +48,75 @@ func (w *ValencePointWidget) CreateRenderer() fyne.WidgetRenderer {
 // Tapped обработка клика по точке
 func (w *ValencePointWidget) Tapped(e *fyne.PointEvent) {
 	log.Printf("Левый клик по валентной точке %d", w.point.ID)
-	
+
 	// Вставляем блок в эту точку
 	success := w.manager.InsertBlockAtPoint(w.point)
 	if success {
+		// Получаем ссылку на GUI для обновления состояния
+		gui := w.manager.programPanel.gui
+
 		// Очищаем все точки после успешной вставки
 		w.manager.ClearPoints()
+
+		// Отключаем режим вставки в programPanel
+		w.manager.programPanel.isInsertMode = false
+		w.manager.programPanel.insertBlockType = 0
+
+		// Обновляем GUI в главном потоке
+		fyne.Do(func() {
+			// Скрываем кнопку отмены в GUI
+			if gui != nil && gui.insertCancelButton != nil {
+				gui.insertCancelButton.Hide()
+			}
+
+			// Обновляем состояние кнопок блоков
+			if gui != nil {
+				gui.updateBlockButtonsState()
+			}
+
+			// Обновляем панель инструментов
+			if gui != nil && gui.toolbar != nil {
+				gui.updateToolbarState()
+			}
+
+			log.Println("Режим вставки отключен после успешной вставки блока")
+		})
 	}
 }
 
 // TappedSecondary обработка правого клика
 func (w *ValencePointWidget) TappedSecondary(e *fyne.PointEvent) {
 	log.Println("Правый клик по валентной точке - отмена")
-	
+
+	// Получаем ссылку на GUI для обновления состояния
+	gui := w.manager.programPanel.gui
+
 	// Очищаем все точки
 	w.manager.ClearPoints()
+
+	// Отключаем режим вставки в programPanel
+	w.manager.programPanel.isInsertMode = false
+	w.manager.programPanel.insertBlockType = 0
+
+	// Обновляем GUI в главном потоке
+	fyne.Do(func() {
+		// Скрываем кнопку отмены в GUI
+		if gui != nil && gui.insertCancelButton != nil {
+			gui.insertCancelButton.Hide()
+		}
+
+		// Обновляем состояние кнопок блоков
+		if gui != nil {
+			gui.updateBlockButtonsState()
+		}
+
+		// Обновляем панель инструментов
+		if gui != nil && gui.toolbar != nil {
+			gui.updateToolbarState()
+		}
+
+		log.Println("Режим вставки отключен после успешной вставки блока")
+	})
 }
 
 // MouseIn обработка наведения мыши
@@ -72,7 +126,7 @@ func (w *ValencePointWidget) MouseIn(e *desktop.MouseEvent) {
 	w.circle.StrokeWidth = 2
 	w.circle.StrokeColor = color.White
 	w.circle.Refresh()
-	
+
 	// Показываем временные связи для предварительного просмотра
 	w.manager.ShowTempConnection(w.point)
 }
@@ -84,7 +138,7 @@ func (w *ValencePointWidget) MouseOut() {
 	w.circle.StrokeWidth = 1
 	w.circle.StrokeColor = color.White
 	w.circle.Refresh()
-	
+
 	// Скрываем временные связи
 	w.manager.HideTempConnection()
 }
@@ -105,30 +159,41 @@ type valencePointRenderer struct {
 	circle *canvas.Circle
 }
 
-// Layout упорядочивает элементы
+// Layout упорядочивает элементы с учетом масштаба
 func (r *valencePointRenderer) Layout(size fyne.Size) {
-	// Круг занимает всю доступную область
-	diameter := float32(16) * r.widget.manager.programPanel.GetScale()
-	r.widget.Resize(fyne.NewSize(diameter, diameter))
-	r.circle.Resize(fyne.NewSize(diameter, diameter))
+	scale := r.widget.manager.programPanel.GetScale()
+
+	// Размер точки должен масштабироваться
+	pointSize := float32(16) * scale
+	r.widget.Resize(fyne.NewSize(pointSize, pointSize))
+
+	// Круг должен занимать всю доступную область
+	r.circle.Resize(fyne.NewSize(pointSize, pointSize))
 	r.circle.Move(fyne.NewPos(0, 0))
 }
 
-// MinSize возвращает минимальный размер
+// MinSize возвращает минимальный размер с учетом масштаба
 func (r *valencePointRenderer) MinSize() fyne.Size {
-	diameter := float32(16) * r.widget.manager.programPanel.GetScale()
-	return fyne.NewSize(diameter, diameter)
+	scale := r.widget.manager.programPanel.GetScale()
+	pointSize := float32(16) * scale
+	return fyne.NewSize(pointSize, pointSize)
 }
 
-// Refresh обновляет отображение
+// Refresh обновляет отображение с учетом масштаба
 func (r *valencePointRenderer) Refresh() {
+	scale := r.widget.manager.programPanel.GetScale()
+
 	if r.widget.isHovered {
 		r.circle.FillColor = color.NRGBA{R: 255, G: 255, B: 0, A: 255}
-		r.circle.StrokeWidth = 2
+		r.circle.StrokeWidth = 2 * scale
 	} else {
 		r.circle.FillColor = color.NRGBA{R: 255, G: 215, B: 0, A: 255}
-		r.circle.StrokeWidth = 1
+		r.circle.StrokeWidth = 1 * scale
 	}
+
+	// Обновляем размер точки
+	pointSize := float32(16) * scale
+	r.circle.Resize(fyne.NewSize(pointSize, pointSize))
 	r.circle.Refresh()
 }
 
