@@ -1,17 +1,18 @@
-// app_state.go
 package main
 
 import "sync"
 
 // AppState хранит всё разделяемое состояние приложения, доступ к которому
 // может осуществляться из нескольких горутин (например, callback'и Bluetooth).
-// Все методы используют мьютекс для безопасного доступа.
+// Теперь также содержит программу и состояние её выполнения.
 type AppState struct {
 	mu               sync.RWMutex
 	connectedHub     *HubInfo
 	connectedDevices map[byte]*Device
 	availableBlocks  map[BlockType]bool
 	selectedBlock    *ProgramBlock
+	program          *Program          // добавлено: текущая программа
+	programState     ProgramState      // добавлено: состояние выполнения
 }
 
 // NewAppState создаёт новый экземпляр состояния с инициализированными картами.
@@ -19,20 +20,18 @@ func NewAppState() *AppState {
 	return &AppState{
 		connectedDevices: make(map[byte]*Device),
 		availableBlocks:  make(map[BlockType]bool),
+		program:          &Program{Name: "Новая программа", Blocks: []*ProgramBlock{}, Connections: []*Connection{}},
+		programState:     ProgramStateStopped,
 	}
 }
 
-// --- connectedHub ---
-
-// GetConnectedHub возвращает текущую информацию о хабе (или nil).
+// --- connectedHub --- (без изменений)
 func (s *AppState) GetConnectedHub() *HubInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.connectedHub
 }
 
-// SetConnectedHub сохраняет информацию о хабе. Делает копию, чтобы избежать
-// случайного изменения извне.
 func (s *AppState) SetConnectedHub(hub *HubInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,12 +39,10 @@ func (s *AppState) SetConnectedHub(hub *HubInfo) {
 		s.connectedHub = nil
 		return
 	}
-	// Копируем, так как переданный указатель может быть использован где-то ещё.
 	copyHub := *hub
 	s.connectedHub = &copyHub
 }
 
-// UpdateHubBattery обновляет только уровень заряда батареи (если хаб существует).
 func (s *AppState) UpdateHubBattery(level int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,31 +51,24 @@ func (s *AppState) UpdateHubBattery(level int) {
 	}
 }
 
-// --- connectedDevices ---
-
-// GetDevice возвращает устройство по порту (или nil).
+// --- connectedDevices --- (без изменений)
 func (s *AppState) GetDevice(port byte) *Device {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.connectedDevices[port]
 }
 
-// GetAllDevices возвращает копию карты подключённых устройств.
-// Возвращается новая карта, чтобы вызывающий мог безопасно итерировать.
 func (s *AppState) GetAllDevices() map[byte]*Device {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	devices := make(map[byte]*Device, len(s.connectedDevices))
 	for k, v := range s.connectedDevices {
-		// Делаем поверхностную копию, т.к. поля Device не изменяются после создания.
 		devCopy := *v
 		devices[k] = &devCopy
 	}
 	return devices
 }
 
-// UpdateDevice сохраняет или обновляет устройство на порту.
-// device копируется, чтобы избежать внешних изменений.
 func (s *AppState) UpdateDevice(port byte, device *Device) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,23 +80,19 @@ func (s *AppState) UpdateDevice(port byte, device *Device) {
 	s.connectedDevices[port] = &devCopy
 }
 
-// RemoveDevice удаляет устройство на порту.
 func (s *AppState) RemoveDevice(port byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.connectedDevices, port)
 }
 
-// ClearDevices очищает карту устройств.
 func (s *AppState) ClearDevices() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.connectedDevices = make(map[byte]*Device)
 }
 
-// --- availableBlocks ---
-
-// GetAvailableBlocks возвращает копию карты доступных блоков.
+// --- availableBlocks --- (без изменений)
 func (s *AppState) GetAvailableBlocks() map[BlockType]bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -117,7 +103,6 @@ func (s *AppState) GetAvailableBlocks() map[BlockType]bool {
 	return blocks
 }
 
-// SetAvailableBlocks заменяет карту доступных блоков.
 func (s *AppState) SetAvailableBlocks(blocks map[BlockType]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,25 +112,86 @@ func (s *AppState) SetAvailableBlocks(blocks map[BlockType]bool) {
 	}
 }
 
-// SetAvailableBlock устанавливает доступность конкретного блока.
 func (s *AppState) SetAvailableBlock(bt BlockType, available bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.availableBlocks[bt] = available
 }
 
-// --- selectedBlock ---
-
-// GetSelectedBlock возвращает текущий выбранный блок.
+// --- selectedBlock --- (без изменений)
 func (s *AppState) GetSelectedBlock() *ProgramBlock {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.selectedBlock
 }
 
-// SetSelectedBlock сохраняет выбранный блок.
 func (s *AppState) SetSelectedBlock(block *ProgramBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.selectedBlock = block
+}
+
+// ========== Новые методы для работы с программой ==========
+
+// GetProgram возвращает копию текущей программы.
+func (s *AppState) GetProgram() *Program {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	// Возвращаем ссылку на программу, т.к. она сама по себе не thread-safe,
+	// но предполагается, что все изменения будут проходить через AppState.
+	// Для внешнего чтения можно сделать копию, но пока оставим так.
+	return s.program
+}
+
+// SetProgram заменяет текущую программу.
+func (s *AppState) SetProgram(prog *Program) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.program = prog
+}
+
+// UpdateProgramBlocks заменяет список блоков программы (с копированием).
+func (s *AppState) UpdateProgramBlocks(blocks []*ProgramBlock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Создаём глубокую копию блоков, чтобы избежать случайных изменений извне.
+	newBlocks := make([]*ProgramBlock, len(blocks))
+	for i, b := range blocks {
+		copyBlock := *b
+		// Копируем Parameters, так как это map
+		if b.Parameters != nil {
+			copyBlock.Parameters = make(map[string]interface{}, len(b.Parameters))
+			for k, v := range b.Parameters {
+				copyBlock.Parameters[k] = v
+			}
+		}
+		newBlocks[i] = &copyBlock
+	}
+	s.program.Blocks = newBlocks
+}
+
+// GetProgramState возвращает состояние выполнения программы.
+func (s *AppState) GetProgramState() ProgramState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.programState
+}
+
+// SetProgramState устанавливает состояние выполнения программы.
+func (s *AppState) SetProgramState(state ProgramState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.programState = state
+}
+
+// FindBlockByID находит блок по ID внутри программы.
+func (s *AppState) FindBlockByID(id int) *ProgramBlock {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, b := range s.program.Blocks {
+		if b.ID == id {
+			return b
+		}
+	}
+	return nil
 }

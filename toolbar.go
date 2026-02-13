@@ -21,15 +21,14 @@ type Toolbar struct {
 	saveButton   *widget.Button
 	loadButton   *widget.Button
 	exportButton *widget.Button
-	clearButton  *widget.Button // Добавляем поле для кнопки очистки
+	clearButton  *widget.Button
 }
 
-// NewToolbar создает новую панель инструментов
+// NewToolbar создаёт новую панель инструментов
 func NewToolbar(gui *MainGUI) *Toolbar {
 	toolbar := &Toolbar{
 		gui: gui,
 	}
-
 	toolbar.container = toolbar.buildUI()
 	return toolbar
 }
@@ -58,7 +57,7 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 		} else if isRunning {
 			t.runButton.Disable()
 			t.stopButton.Enable()
-			// Устанавливаем зеленый цвет для кнопки запуска
+			// Устанавливаем зелёный цвет для кнопки запуска (успех)
 			t.runButton.Importance = widget.SuccessImportance
 		} else {
 			t.runButton.Disable()
@@ -114,13 +113,12 @@ func (t *Toolbar) buildUI() *fyne.Container {
 
 			// Проверяем, есть ли блок "Начать"
 			hasStartBlock := false
-			for _, block := range t.gui.programMgr.program.Blocks {
+			for _, block := range t.gui.programMgr.state.GetProgram().Blocks {
 				if block.Type == BlockTypeStart {
 					hasStartBlock = true
 					break
 				}
 			}
-
 			if !hasStartBlock {
 				dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Начать'"), t.gui.window)
 				return
@@ -128,13 +126,12 @@ func (t *Toolbar) buildUI() *fyne.Container {
 
 			// Проверяем, есть ли блок "Стоп"
 			hasStopBlock := false
-			for _, block := range t.gui.programMgr.program.Blocks {
+			for _, block := range t.gui.programMgr.state.GetProgram().Blocks {
 				if block.Type == BlockTypeStop {
 					hasStopBlock = true
 					break
 				}
 			}
-
 			if !hasStopBlock {
 				dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Стоп'"), t.gui.window)
 				return

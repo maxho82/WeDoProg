@@ -15,7 +15,7 @@ type DraggableBlock struct {
 	block        *ProgramBlock
 	programMgr   *ProgramManager
 	gui          *MainGUI
-	programPanel *ProgramPanel // Ссылка на родительскую панель
+	programPanel *ProgramPanel
 	isSelected   bool
 	isExecuting  bool
 }
@@ -28,14 +28,9 @@ func NewDraggableBlock(block *ProgramBlock, programMgr *ProgramManager, gui *Mai
 		gui:          gui,
 		programPanel: programPanel,
 	}
-
-	// Устанавливаем размер блока с учетом базовых размеров
-	block.Width = 180
-	block.Height = 100
-
-	// КРИТИЧЕСКИ ВАЖНЫЙ ВЫЗОВ
+	block.Width = DefaultBlockWidth
+	block.Height = DefaultBlockHeight
 	d.ExtendBaseWidget(d)
-
 	return d
 }
 
@@ -134,20 +129,16 @@ func (d *DraggableBlock) SetExecuting(executing bool) {
 func (d *DraggableBlock) GetTopConnectorPosition() fyne.Position {
 	pos := d.Position()
 	size := d.Size()
-	//shapeType := getShapeType(d.block.Type)
-
-	topConnector, _ := calculateConnectorPositions(pos, size) //shapeType,
-	return topConnector
+	top, _ := calculateConnectorPositions(pos, size)
+	return top
 }
 
 // GetBottomConnectorPosition возвращает позицию нижнего коннектора
 func (d *DraggableBlock) GetBottomConnectorPosition() fyne.Position {
 	pos := d.Position()
 	size := d.Size()
-	//shapeType := getShapeType(d.block.Type)
-
-	_, bottomConnector := calculateConnectorPositions(pos, size) //  shapeType,
-	return bottomConnector
+	_, bottom := calculateConnectorPositions(pos, size)
+	return bottom
 }
 
 // parseColor преобразует строку цвета в color.Color

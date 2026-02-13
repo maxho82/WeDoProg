@@ -3,23 +3,39 @@ package main
 import (
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
 )
 
-// ProgramManager управляет программами
-type ProgramManager struct {
-	hubMgr         *HubManager
-	deviceMgr      *DeviceManager
-	program        *Program
-	programs       map[string]*Program
-	programsMu     sync.RWMutex
-	currentState   ProgramState
-	stateChangeCB  func(state ProgramState) // Callback для изменения состояния
-	currentBlockCB func(blockID int)        // Callback для отслеживания текущего блока
-}
+// BlockType определяет тип блока программирования
+type BlockType int
+
+const (
+	BlockTypeStart BlockType = iota
+	BlockTypeMotor
+	BlockTypeLED
+	BlockTypeWait
+	BlockTypeLoopStart
+	BlockTypeLoopEnd
+	BlockTypeCondition
+	BlockTypeTiltSensor
+	BlockTypeDistanceSensor
+	BlockTypeSound
+	BlockTypeVoltageSensor
+	BlockTypeCurrentSensor
+	BlockTypeStop
+)
+
+// ProgramState состояние выполнения программы
+type ProgramState int
+
+const (
+	ProgramStateStopped ProgramState = iota
+	ProgramStateRunning
+	ProgramStatePaused
+	ProgramStateError
+)
 
 // Program представляет программу
 type Program struct {
@@ -37,7 +53,7 @@ type ProgramBlock struct {
 	Title        string
 	Description  string
 	X, Y         float64
-	DragStartPos fyne.Position
+	DragStartPos fyne.Position // из пакета fyne, но импорт не показан для краткости
 	Width        float64
 	Height       float64
 	Parameters   map[string]interface{}
@@ -53,232 +69,484 @@ type Connection struct {
 	ToBlockID   int
 }
 
-// ProgramState состояние выполнения программы
-type ProgramState int
-
-const (
-	ProgramStateStopped ProgramState = iota
-	ProgramStateRunning
-	ProgramStatePaused
-	ProgramStateError
-)
-
-// BlockType тип блока программирования
-type BlockType int
-
-const (
-	BlockTypeStart BlockType = iota
-	BlockTypeMotor
-	BlockTypeLED
-	BlockTypeWait
-	BlockTypeLoopStart // Начало цикла
-	BlockTypeLoopEnd   // Конец цикла
-	BlockTypeCondition
-	BlockTypeTiltSensor
-	BlockTypeDistanceSensor
-	BlockTypeSound
-	BlockTypeVoltageSensor
-	BlockTypeCurrentSensor
-	BlockTypeStop
-)
-
-// LoopContext контекст выполнения цикла
+// LoopContext контекст выполнения цикла (используется внутри executeProgram)
 type LoopContext struct {
-	StartBlockID int  // ID блока начала цикла
-	EndBlockID   int  // ID блока конца цикла
-	CurrentIter  int  // Текущая итерация
-	MaxIter      int  // Максимальное количество итераций (0 - бесконечно)
-	IsForever    bool // Бесконечный цикл
+	StartBlockID int
+	EndBlockID   int
+	CurrentIter  int
+	MaxIter      int
+	IsForever    bool
 }
 
-// Метод для установки callback
-func (pm *ProgramManager) SetCurrentBlockCallback(callback func(blockID int)) {
-	pm.currentBlockCB = callback
+// ProgramManager управляет программами, используя AppState как хранилище.
+type ProgramManager struct {
+	hubMgr    *HubManager
+	deviceMgr *DeviceManager
+	state     *AppState
+
+	stateChangeCB  func(state ProgramState)
+	currentBlockCB func(blockID int)
 }
 
-// NewProgramManager создает менеджер программ
-func NewProgramManager(hubMgr *HubManager, deviceMgr *DeviceManager) *ProgramManager {
+// NewProgramManager создаёт менеджер программ
+func NewProgramManager(hubMgr *HubManager, deviceMgr *DeviceManager, state *AppState) *ProgramManager {
 	return &ProgramManager{
-		hubMgr:       hubMgr,
-		deviceMgr:    deviceMgr,
-		program:      &Program{Name: "Новая программа", Created: time.Now(), Modified: time.Now()},
-		programs:     make(map[string]*Program),
-		currentState: ProgramStateStopped,
+		hubMgr:    hubMgr,
+		deviceMgr: deviceMgr,
+		state:     state,
 	}
 }
 
-// CreateBlock создает новый блок для дракон-схемы
+// --- Методы работы с программой ---
+
+// CreateBlock создаёт новый блок (не добавляет в программу)
 func (pm *ProgramManager) CreateBlock(blockType BlockType, x, y float64) *ProgramBlock {
-	// Генерируем новый уникальный ID
+	prog := pm.state.GetProgram()
 	newID := 1
-	for _, block := range pm.program.Blocks {
+	for _, block := range prog.Blocks {
 		if block.ID >= newID {
 			newID = block.ID + 1
 		}
 	}
-
 	block := &ProgramBlock{
 		ID:          newID,
 		Type:        blockType,
 		X:           x,
 		Y:           y,
-		Width:       180,                          // Увеличиваем ширину для лучшей читаемости
-		Height:      100,                          // Увеличиваем высоту для лучшей читаемости
-		Parameters:  make(map[string]interface{}), // Инициализируем здесь!
+		Width:       DefaultBlockWidth,
+		Height:      DefaultBlockHeight,
+		Parameters:  make(map[string]interface{}),
 		IsStart:     (blockType == BlockTypeStart),
 		NextBlockID: 0,
-		Color:       "#4CAF50", // Значение по умолчанию
+		Color:       getBlockColor(blockType),
 	}
-
-	// Настраиваем блок в зависимости от типа
 	pm.configureBlock(block)
-
 	log.Printf("Создан блок: %s (ID: %d)", block.Title, block.ID)
-
-	// ВАЖНО: НЕ добавляем блок в программу здесь!
-	// Это сделает programPanel.AddBlock после определения позиции вставки
-
 	return block
 }
 
-// getBlockColor возвращает цвет для типа блока
-func getBlockColor(blockType BlockType) string {
-	switch blockType {
-	case BlockTypeStart:
-		return "#4CAF50" // Зеленый
-	case BlockTypeMotor:
-		return "#2196F3" // Синий
-	case BlockTypeLED:
-		return "#FF9800" // Оранжевый
-	case BlockTypeWait:
-		return "#9E9E9E" // Серый
-	case BlockTypeLoopStart, BlockTypeLoopEnd:
-		return "#9C27B0" // Фиолетовый
-	case BlockTypeCondition:
-		return "#3F51B5" // Индиго
-	case BlockTypeTiltSensor:
-		return "#673AB7" // Глубокий фиолетовый
-	case BlockTypeDistanceSensor:
-		return "#00BCD4" // Голубой
-	case BlockTypeSound:
-		return "#FF5722" // Глубокий оранжевый
-	case BlockTypeVoltageSensor:
-		return "#8BC34A" // Светло-зеленый
-	case BlockTypeCurrentSensor:
-		return "#F44336" // Красный
-	case BlockTypeStop:
-		return "#F44336" // Красный
-	default:
-		return "#607D8B" // Сине-серый
-	}
-}
-
-// InsertBlock вставляет блок в программу в указанную позицию
+// InsertBlock вставляет блок в программу
 func (pm *ProgramManager) InsertBlock(block *ProgramBlock, afterBlockID int) bool {
-	// Если afterBlockID = 0, добавляем в начало
-	// Если afterBlockID = -1, добавляем в конец
+	prog := pm.state.GetProgram()
+	blocks := prog.Blocks
 
 	if afterBlockID == -1 {
-		// Добавляем в конец
-		pm.program.Blocks = append(pm.program.Blocks, block)
-
-		// Находим предыдущий блок (последний не-стоп блок)
+		blocks = append(blocks, block)
 		var prevBlock *ProgramBlock
-		for _, b := range pm.program.Blocks {
+		for _, b := range blocks {
 			if b.ID != block.ID && b.Type != BlockTypeStop && b.NextBlockID == 0 {
 				prevBlock = b
 			}
 		}
-
 		if prevBlock != nil {
 			prevBlock.NextBlockID = block.ID
 			pm.AddConnection(prevBlock.ID, block.ID)
 		}
-
-		pm.program.Modified = time.Now()
+		pm.state.UpdateProgramBlocks(blocks)
 		return true
 	}
-
 	if afterBlockID == 0 {
-		// Добавляем в начало
-		// Делаем все существующие блоки не стартовыми
-		for _, b := range pm.program.Blocks {
+		for _, b := range blocks {
 			b.IsStart = false
 		}
-
 		block.IsStart = true
 		block.NextBlockID = 0
-
-		// Если есть другие блоки, устанавливаем связь
-		if len(pm.program.Blocks) > 0 {
-			block.NextBlockID = pm.program.Blocks[0].ID
-			pm.AddConnection(block.ID, pm.program.Blocks[0].ID)
+		if len(blocks) > 0 {
+			block.NextBlockID = blocks[0].ID
+			pm.AddConnection(block.ID, blocks[0].ID)
 		}
-
-		// Вставляем в начало
-		pm.program.Blocks = append([]*ProgramBlock{block}, pm.program.Blocks...)
-		pm.program.Modified = time.Now()
+		blocks = append([]*ProgramBlock{block}, blocks...)
+		pm.state.UpdateProgramBlocks(blocks)
 		return true
 	}
 
-	// Вставляем после указанного блока
-	var insertIndex = -1
-	for i, b := range pm.program.Blocks {
+	insertIndex := -1
+	for i, b := range blocks {
 		if b.ID == afterBlockID {
 			insertIndex = i + 1
 			break
 		}
 	}
-
 	if insertIndex == -1 {
-		// Блок не найден, добавляем в конец
-		pm.program.Blocks = append(pm.program.Blocks, block)
-		pm.program.Modified = time.Now()
-		return true
+		blocks = append(blocks, block)
+	} else {
+		blocks = append(blocks[:insertIndex], append([]*ProgramBlock{block}, blocks[insertIndex:]...)...)
 	}
-
-	// Вставляем блок
-	pm.program.Blocks = append(pm.program.Blocks[:insertIndex],
-		append([]*ProgramBlock{block}, pm.program.Blocks[insertIndex:]...)...)
-
-	// Обновляем связи
-	prevBlock, _ := pm.GetBlock(afterBlockID)
-	if prevBlock != nil {
-		block.NextBlockID = prevBlock.NextBlockID
-		prevBlock.NextBlockID = block.ID
-
-		// Обновляем соединения
-		pm.RemoveConnection(afterBlockID)
-		pm.AddConnection(afterBlockID, block.ID)
-		if block.NextBlockID > 0 {
-			pm.AddConnection(block.ID, block.NextBlockID)
-		}
-	}
-
-	pm.program.Modified = time.Now()
+	pm.state.UpdateProgramBlocks(blocks)
+	pm.rebuildConnections()
 	return true
 }
 
-// configureBlock настраивает блок
+// AddConnection добавляет соединение между блоками
+func (pm *ProgramManager) AddConnection(fromBlockID, toBlockID int) bool {
+	prog := pm.state.GetProgram()
+	fromBlock := pm.findBlockByID(fromBlockID)
+	toBlock := pm.findBlockByID(toBlockID)
+	if fromBlock == nil || toBlock == nil {
+		return false
+	}
+	fromBlock.NextBlockID = toBlockID
+	conn := &Connection{FromBlockID: fromBlockID, ToBlockID: toBlockID}
+	prog.Connections = append(prog.Connections, conn)
+	pm.state.SetProgram(prog)
+	return true
+}
+
+// RemoveConnection удаляет соединение по fromBlockID
+func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
+	prog := pm.state.GetProgram()
+	newConns := make([]*Connection, 0, len(prog.Connections))
+	for _, conn := range prog.Connections {
+		if conn.FromBlockID != fromBlockID {
+			newConns = append(newConns, conn)
+		}
+	}
+	prog.Connections = newConns
+	if block := pm.findBlockByID(fromBlockID); block != nil {
+		block.NextBlockID = 0
+	}
+	pm.state.SetProgram(prog)
+	return true
+}
+
+// RemoveBlock удаляет блок из программы
+func (pm *ProgramManager) RemoveBlock(blockID int) bool {
+	prog := pm.state.GetProgram()
+	newBlocks := make([]*ProgramBlock, 0, len(prog.Blocks))
+	for _, b := range prog.Blocks {
+		if b.ID != blockID {
+			newBlocks = append(newBlocks, b)
+		}
+	}
+	prog.Blocks = newBlocks
+	pm.rebuildConnections()
+	pm.state.SetProgram(prog)
+	return true
+}
+
+// rebuildConnections перестраивает все связи в порядке следования блоков
+func (pm *ProgramManager) rebuildConnections() {
+	prog := pm.state.GetProgram()
+	prog.Connections = make([]*Connection, 0)
+	for i := 0; i < len(prog.Blocks)-1; i++ {
+		current := prog.Blocks[i]
+		next := prog.Blocks[i+1]
+		current.NextBlockID = next.ID
+		prog.Connections = append(prog.Connections, &Connection{FromBlockID: current.ID, ToBlockID: next.ID})
+	}
+	if len(prog.Blocks) > 0 {
+		prog.Blocks[len(prog.Blocks)-1].NextBlockID = 0
+	}
+	pm.state.SetProgram(prog)
+}
+
+// GetBlock возвращает блок по ID
+func (pm *ProgramManager) GetBlock(blockID int) (*ProgramBlock, bool) {
+	block := pm.findBlockByID(blockID)
+	return block, block != nil
+}
+
+// UpdateBlock обновляет параметры блока
+func (pm *ProgramManager) UpdateBlock(blockID int, params map[string]interface{}) bool {
+	prog := pm.state.GetProgram()
+	for _, block := range prog.Blocks {
+		if block.ID == blockID {
+			for k, v := range params {
+				block.Parameters[k] = v
+			}
+			pm.state.SetProgram(prog)
+			return true
+		}
+	}
+	return false
+}
+
+// ClearProgram удаляет все блоки и соединения
+func (pm *ProgramManager) ClearProgram() {
+	prog := &Program{
+		Name:        "Новая программа",
+		Blocks:      []*ProgramBlock{},
+		Connections: []*Connection{},
+		Created:     time.Now(),
+		Modified:    time.Now(),
+	}
+	pm.state.SetProgram(prog)
+	pm.state.SetProgramState(ProgramStateStopped)
+	pm.notifyStateChange()
+	log.Println("Программа очищена")
+}
+
+// StopProgram останавливает выполнение программы
+func (pm *ProgramManager) StopProgram() {
+	if pm.state.GetProgramState() == ProgramStateRunning {
+		pm.state.SetProgramState(ProgramStateStopped)
+		pm.notifyStateChange()
+		log.Println("Программа остановлена")
+		pm.ensureAllMotorsStopped()
+		pm.stopAllSounds()
+		if pm.currentBlockCB != nil {
+			pm.currentBlockCB(-1)
+		}
+	}
+}
+
+// --- Методы выполнения программы ---
+
+// RunProgram запускает выполнение программы
+func (pm *ProgramManager) RunProgram() error {
+	if pm.state.GetProgramState() == ProgramStateRunning {
+		return fmt.Errorf("программа уже выполняется")
+	}
+	if !pm.hubMgr.IsConnected() {
+		return fmt.Errorf("не подключено к хабу")
+	}
+	prog := pm.state.GetProgram()
+	if len(prog.Blocks) == 0 {
+		return fmt.Errorf("нет блоков в программе")
+	}
+	var startBlock *ProgramBlock
+	for _, block := range prog.Blocks {
+		if block.Type == BlockTypeStart {
+			startBlock = block
+			break
+		}
+	}
+	if startBlock == nil {
+		return fmt.Errorf("программа должна содержать блок 'Начать'")
+	}
+	hasStop := false
+	for _, block := range prog.Blocks {
+		if block.Type == BlockTypeStop {
+			hasStop = true
+			break
+		}
+	}
+	if !hasStop {
+		return fmt.Errorf("программа должна содержать блок 'Стоп'")
+	}
+
+	pm.state.SetProgramState(ProgramStateRunning)
+	pm.notifyStateChange()
+	log.Println("Запуск программы...")
+	go pm.executeProgram(startBlock)
+	return nil
+}
+
+// executeProgram выполняет программу
+func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
+	log.Println("=== Начало выполнения программы ===")
+	loopStack := make([]*LoopContext, 0)
+
+	currentBlock := startBlock
+	for pm.state.GetProgramState() == ProgramStateRunning && currentBlock != nil {
+		if pm.currentBlockCB != nil {
+			pm.currentBlockCB(currentBlock.ID)
+		}
+
+		switch currentBlock.Type {
+		case BlockTypeStop:
+			pm.handleStopBlock(currentBlock)
+			return
+
+		case BlockTypeLoopStart:
+			// Проверяем, не находимся ли мы уже внутри этого цикла (возврат после итерации)
+			found := false
+			for _, ctx := range loopStack {
+				if ctx.StartBlockID == currentBlock.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				// Первый вход – создаём контекст
+				loopCtx, err := pm.handleLoopStart(currentBlock)
+				if err != nil {
+					log.Printf("Ошибка в начале цикла: %v", err)
+					pm.state.SetProgramState(ProgramStateError)
+					pm.finishExecution()
+					return
+				}
+				loopStack = append(loopStack, loopCtx)
+			}
+			// После начала цикла (или при возврате) переходим к следующему блоку (первому внутри цикла)
+			if currentBlock.NextBlockID != 0 {
+				next, _ := pm.GetBlock(currentBlock.NextBlockID)
+				currentBlock = next
+				continue
+			}
+
+		case BlockTypeLoopEnd:
+			if len(loopStack) == 0 {
+				log.Printf("Ошибка: блок конца цикла без начала")
+				pm.state.SetProgramState(ProgramStateError)
+				pm.finishExecution()
+				return
+			}
+			loopCtx := loopStack[len(loopStack)-1]
+			shouldContinue, err := pm.handleLoopEnd(currentBlock, loopCtx)
+			if err != nil {
+				log.Printf("Ошибка в конце цикла: %v", err)
+				pm.state.SetProgramState(ProgramStateError)
+				pm.finishExecution()
+				return
+			}
+			if shouldContinue {
+				// Переходим к первому блоку внутри цикла (следующий за LoopStart)
+				startLoop, _ := pm.GetBlock(loopCtx.StartBlockID)
+				if startLoop.NextBlockID != 0 {
+					next, _ := pm.GetBlock(startLoop.NextBlockID)
+					currentBlock = next
+				} else {
+					// Пустое тело цикла – переходим на конец цикла (блок LoopEnd)
+					endBlock, _ := pm.GetBlock(loopCtx.EndBlockID)
+					currentBlock = endBlock
+				}
+				continue
+			} else {
+				// Завершаем цикл – удаляем контекст и переходим к следующему за LoopEnd блоку
+				loopStack = loopStack[:len(loopStack)-1]
+			}
+
+		default:
+			if err := pm.handleRegularBlock(currentBlock); err != nil {
+				log.Printf("Ошибка выполнения блока %d: %v", currentBlock.ID, err)
+				pm.state.SetProgramState(ProgramStateError)
+				pm.finishExecution()
+				return
+			}
+		}
+
+		// Переход к следующему блоку по цепочке (если не было continue)
+		if currentBlock.NextBlockID == 0 {
+			break
+		}
+		next, exists := pm.GetBlock(currentBlock.NextBlockID)
+		if !exists {
+			log.Printf("Ошибка: следующий блок %d не найден", currentBlock.NextBlockID)
+			pm.state.SetProgramState(ProgramStateError)
+			pm.finishExecution()
+			return
+		}
+		currentBlock = next
+
+		if currentBlock.Type != BlockTypeWait {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	pm.finishExecution()
+}
+
+// handleLoopStart обрабатывает начало цикла
+func (pm *ProgramManager) handleLoopStart(block *ProgramBlock) (*LoopContext, error) {
+	loopEndID, ok := block.Parameters["loopEndID"].(int)
+	if !ok || loopEndID == 0 {
+		return nil, fmt.Errorf("блок цикла %d не имеет связанного конца цикла", block.ID)
+	}
+	forever, _ := block.Parameters["forever"].(bool)
+	maxIter := 1
+	if !forever {
+		if c, ok := block.Parameters["count"].(int); ok {
+			maxIter = c
+		}
+	}
+	ctx := &LoopContext{
+		StartBlockID: block.ID,
+		EndBlockID:   loopEndID,
+		CurrentIter:  0,
+		MaxIter:      maxIter,
+		IsForever:    forever,
+	}
+	if block.OnExecute != nil {
+		if err := block.OnExecute(); err != nil {
+			return nil, err
+		}
+	}
+	log.Printf("Начало цикла %d. Параметры: forever=%v, count=%d", block.ID, forever, maxIter)
+	return ctx, nil
+}
+
+// handleLoopEnd обрабатывает конец цикла, возвращает true, если нужно продолжать
+func (pm *ProgramManager) handleLoopEnd(block *ProgramBlock, ctx *LoopContext) (bool, error) {
+	if block.OnExecute != nil {
+		if err := block.OnExecute(); err != nil {
+			return false, err
+		}
+	}
+	ctx.CurrentIter++
+	shouldContinue := ctx.IsForever || ctx.CurrentIter < ctx.MaxIter
+	log.Printf("Конец цикла %d. Итерация %d/%d. Продолжать: %v", ctx.StartBlockID, ctx.CurrentIter, ctx.MaxIter, shouldContinue)
+	return shouldContinue, nil
+}
+
+// handleRegularBlock выполняет обычный блок
+func (pm *ProgramManager) handleRegularBlock(block *ProgramBlock) error {
+	if block.OnExecute != nil {
+		return block.OnExecute()
+	}
+	return nil
+}
+
+// handleStopBlock выполняет блок "Стоп"
+func (pm *ProgramManager) handleStopBlock(block *ProgramBlock) {
+	if block.OnExecute != nil {
+		_ = block.OnExecute()
+	}
+	pm.finishExecution()
+}
+
+// finishExecution завершает выполнение, останавливает моторы и звуки
+func (pm *ProgramManager) finishExecution() {
+	pm.state.SetProgramState(ProgramStateStopped)
+	pm.notifyStateChange()
+	pm.ensureAllMotorsStopped()
+	pm.stopAllSounds()
+	if pm.currentBlockCB != nil {
+		pm.currentBlockCB(-1)
+	}
+	log.Println("=== Программа завершена ===")
+}
+
+// ensureAllMotorsStopped останавливает все моторы
+func (pm *ProgramManager) ensureAllMotorsStopped() {
+	log.Println("Гарантированная остановка всех моторов...")
+	for port := byte(1); port <= 6; port++ {
+		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
+			stopCmd := []byte{port, 0x01, 0x01, 0x00}
+			_ = pm.hubMgr.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
+		}
+	}
+}
+
+// stopAllSounds останавливает все звуки
+func (pm *ProgramManager) stopAllSounds() {
+	log.Println("Остановка всех звуков...")
+	for port := byte(1); port <= 6; port++ {
+		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
+			stopCmd := []byte{port, 0x03, 0x00}
+			_ = pm.hubMgr.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
+		}
+	}
+}
+
+// --- Вспомогательные методы ---
+
+// configureBlock настраивает блок в зависимости от типа
 func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
-	// Устанавливаем цвет из функции выше
+	// Цвет извлекается из отдельной функции
 	block.Color = getBlockColor(block.Type)
 
 	switch block.Type {
 	case BlockTypeStart:
 		block.Title = "Начать"
 		block.Description = "Начало программы"
-		block.Color = "#4CAF50"
 		block.IsStart = true
 		block.OnExecute = func() error {
 			log.Println("Начало программы")
 			return nil
 		}
-
 	case BlockTypeMotor:
 		block.Title = "Мотор"
 		block.Description = "Управление мотором"
-		block.Color = "#2196F3"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["power"] = int8(50)
 		block.Parameters["duration"] = uint16(1000)
@@ -286,37 +554,14 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
-
-			// Безопасное получение параметров
-			var port byte
-			var power int8
-			var duration uint16
-
-			if p, ok := block.Parameters["port"].(byte); ok {
-				port = p
-			} else {
-				port = 1
-			}
-
-			if p, ok := block.Parameters["power"].(int8); ok {
-				power = p
-			} else {
-				power = 50
-			}
-
-			if d, ok := block.Parameters["duration"].(uint16); ok {
-				duration = d
-			} else {
-				duration = 1000
-			}
-
+			port := block.Parameters["port"].(byte)
+			power := block.Parameters["power"].(int8)
+			duration := block.Parameters["duration"].(uint16)
 			return pm.deviceMgr.SetMotorPowerAndWait(port, power, duration)
 		}
-
 	case BlockTypeLED:
 		block.Title = "Светодиод"
 		block.Description = "Управление светодиодом"
-		block.Color = "#FF9800"
 		block.Parameters["port"] = byte(6)
 		block.Parameters["red"] = byte(255)
 		block.Parameters["green"] = byte(0)
@@ -331,11 +576,9 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			blue := block.Parameters["blue"].(byte)
 			return pm.deviceMgr.SetLEDColor(port, red, green, blue)
 		}
-
 	case BlockTypeWait:
 		block.Title = "Ждать"
 		block.Description = "Пауза в программе"
-		block.Color = "#9E9E9E"
 		block.Parameters["duration"] = 1.0
 		block.OnExecute = func() error {
 			duration := block.Parameters["duration"].(float64)
@@ -343,43 +586,34 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			time.Sleep(time.Duration(duration*1000) * time.Millisecond)
 			return nil
 		}
-
 	case BlockTypeLoopStart:
 		block.Title = "ДЛЯ"
 		block.Description = "Начало цикла"
-		block.Color = "#9C27B0"
 		block.Parameters["count"] = 5
 		block.Parameters["forever"] = false
-		block.Parameters["loopEndID"] = 0        // ID блока конца цикла
-		block.Parameters["currentIteration"] = 0 // Текущая итерация
+		block.Parameters["loopEndID"] = 0
 		block.OnExecute = func() error {
 			log.Println("Начало цикла")
 			return nil
 		}
-
 	case BlockTypeLoopEnd:
 		block.Title = "КЦ"
 		block.Description = "Конец цикла"
-		block.Color = "#9C27B0"
-		block.Parameters["loopStartID"] = 0 // ID блока начала цикла
+		block.Parameters["loopStartID"] = 0
 		block.OnExecute = func() error {
 			log.Println("Конец цикла")
 			return nil
 		}
-
 	case BlockTypeCondition:
 		block.Title = "Условие"
 		block.Description = "Условный оператор"
-		block.Color = "#3F51B5"
 		block.OnExecute = func() error {
 			log.Println("Проверка условия")
 			return nil
 		}
-
 	case BlockTypeTiltSensor:
 		block.Title = "Датчик наклона"
 		block.Description = "Чтение датчика наклона"
-		block.Color = "#673AB7"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["mode"] = byte(1)
 		block.OnExecute = func() error {
@@ -389,13 +623,11 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			port := block.Parameters["port"].(byte)
 			mode := block.Parameters["mode"].(byte)
 			cmd := []byte{0x01, 0x02, port, 0x22, mode, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
+			return pm.hubMgr.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
 		}
-
 	case BlockTypeDistanceSensor:
 		block.Title = "Датчик расстояния"
 		block.Description = "Измерение расстояния"
-		block.Color = "#00BCD4"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["mode"] = byte(0)
 		block.OnExecute = func() error {
@@ -405,13 +637,11 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			port := block.Parameters["port"].(byte)
 			mode := block.Parameters["mode"].(byte)
 			cmd := []byte{0x01, 0x02, port, 0x23, mode, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
+			return pm.hubMgr.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
 		}
-
 	case BlockTypeSound:
 		block.Title = "Звук"
 		block.Description = "Воспроизведение звука"
-		block.Color = "#FF5722"
 		block.Parameters["port"] = byte(1)
 		block.Parameters["frequency"] = uint16(440)
 		block.Parameters["duration"] = uint16(1000)
@@ -424,11 +654,9 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			duration := block.Parameters["duration"].(uint16)
 			return pm.deviceMgr.PlayToneAndWait(port, frequency, duration)
 		}
-
 	case BlockTypeVoltageSensor:
 		block.Title = "Датчик напряжения"
 		block.Description = "Измерение напряжения"
-		block.Color = "#8BC34A"
 		block.Parameters["port"] = byte(1)
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
@@ -436,13 +664,11 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			}
 			port := block.Parameters["port"].(byte)
 			cmd := []byte{0x01, 0x02, port, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
+			return pm.hubMgr.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
 		}
-
 	case BlockTypeCurrentSensor:
 		block.Title = "Датчик тока"
 		block.Description = "Измерение тока"
-		block.Color = "#F44336"
 		block.Parameters["port"] = byte(1)
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
@@ -450,13 +676,11 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			}
 			port := block.Parameters["port"].(byte)
 			cmd := []byte{0x01, 0x02, port, 0x15, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-			return pm.hubMgr.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd)
+			return pm.hubMgr.WriteCharacteristic(INPUT_COMMAND_UUID, cmd)
 		}
-
 	case BlockTypeStop:
 		block.Title = "Стоп"
 		block.Description = "Остановка программы"
-		block.Color = "#F44336"
 		block.OnExecute = func() error {
 			pm.StopProgram()
 			return nil
@@ -464,656 +688,108 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 	}
 }
 
-// RunProgram запускает выполнение программы
-func (pm *ProgramManager) RunProgram() error {
-	if pm.currentState == ProgramStateRunning {
-		return fmt.Errorf("программа уже выполняется")
-	}
-
-	if !pm.hubMgr.IsConnected() {
-		return fmt.Errorf("не подключено к хабу")
-	}
-
-	if len(pm.program.Blocks) == 0 {
-		return fmt.Errorf("нет блоков в программе")
-	}
-
-	// Находим стартовый блок
-	var startBlock *ProgramBlock
-	for _, block := range pm.program.Blocks {
-		if block.Type == BlockTypeStart {
-			startBlock = block
-			break
-		}
-	}
-
-	if startBlock == nil {
-		return fmt.Errorf("программа должна содержать блок 'Начать'")
-	}
-
-	// Находим блок "Стоп"
-	var hasStopBlock bool
-	for _, block := range pm.program.Blocks {
-		if block.Type == BlockTypeStop {
-			hasStopBlock = true
-			break
-		}
-	}
-
-	if !hasStopBlock {
-		return fmt.Errorf("программа должна содержать блок 'Стоп'")
-	}
-
-	pm.currentState = ProgramStateRunning
-	pm.notifyStateChange() // Уведомляем об изменении состояния
-	log.Println("Запуск программы...")
-
-	// Запускаем выполнение в отдельной горутине
-	go pm.executeProgram(startBlock)
-
-	return nil
-}
-
-// executeProgram выполняет программу
-func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
-	log.Println("=== Начало выполнения программы ===")
-
-	// Стек для контекстов циклов
-	loopStack := make([]*LoopContext, 0)
-
-	// Карта для отслеживания текущих итераций циклов
-	loopIterations := make(map[int]int)
-
-	// Начинаем с стартового блока
-	currentBlock := startBlock
-
-	for pm.currentState == ProgramStateRunning && currentBlock != nil {
-		// Если это блок "Стоп", выполняем его и завершаем
-		if currentBlock.Type == BlockTypeStop {
-			log.Printf(">>> Выполнение блока: %s (ID: %d) <<<", currentBlock.Title, currentBlock.ID)
-
-			// Уведомляем о выполнении блока "Стоп"
-			if pm.currentBlockCB != nil {
-				pm.currentBlockCB(currentBlock.ID)
-			}
-
-			// Выполняем блок "Стоп"
-			if currentBlock.OnExecute != nil {
-				if err := currentBlock.OnExecute(); err != nil {
-					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
-				}
-			}
-
-			// Завершаем выполнение
-			break
-		}
-
-		log.Printf(">>> Выполнение блока: %s (ID: %d) <<<", currentBlock.Title, currentBlock.ID)
-
-		// Уведомляем о текущем выполняемом блоке
-		if pm.currentBlockCB != nil {
-			pm.currentBlockCB(currentBlock.ID)
-		}
-
-		// Обрабатываем специальные блоки
-		switch currentBlock.Type {
-		case BlockTypeLoopStart:
-			// Начало цикла
-			loopEndID, _ := currentBlock.Parameters["loopEndID"].(int)
-			if loopEndID == 0 {
-				log.Printf("ОШИБКА: блок цикла %d не имеет связанного конца цикла", currentBlock.ID)
-				pm.currentState = ProgramStateError
-				break
-			}
-
-			// Получаем параметры цикла
-			forever, _ := currentBlock.Parameters["forever"].(bool)
-			count := 1
-			if !forever {
-				if c, ok := currentBlock.Parameters["count"].(int); ok {
-					count = c
-				}
-			}
-
-			// Создаем контекст цикла
-			loopCtx := &LoopContext{
-				StartBlockID: currentBlock.ID,
-				EndBlockID:   loopEndID,
-				CurrentIter:  0,
-				MaxIter:      count,
-				IsForever:    forever,
-			}
-
-			// Добавляем в стек
-			loopStack = append(loopStack, loopCtx)
-			loopIterations[currentBlock.ID] = 0
-
-			log.Printf("Начало цикла %d. Параметры: forever=%v, count=%d",
-				currentBlock.ID, forever, count)
-
-			// Выполняем блок начала цикла
-			if currentBlock.OnExecute != nil {
-				if err := currentBlock.OnExecute(); err != nil {
-					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
-					pm.currentState = ProgramStateError
-					break
-				}
-			}
-
-			// Переходим к следующему блоку (внутри цикла)
-			if currentBlock.NextBlockID > 0 {
-				nextBlock, exists := pm.GetBlock(currentBlock.NextBlockID)
-				if !exists {
-					log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
-					pm.currentState = ProgramStateError
-					break
-				}
-				currentBlock = nextBlock
-			} else {
-				log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
-				break
-			}
-
-			continue
-
-		case BlockTypeLoopEnd:
-			// Конец цикла
-			loopStartID, _ := currentBlock.Parameters["loopStartID"].(int)
-			if loopStartID == 0 {
-				log.Printf("ОШИБКА: блок конца цикла %d не имеет связанного начала цикла", currentBlock.ID)
-				pm.currentState = ProgramStateError
-				break
-			}
-
-			// Находим контекст цикла в стеке
-			var loopCtx *LoopContext
-			ctxIndex := -1
-			for i, ctx := range loopStack {
-				if ctx.StartBlockID == loopStartID {
-					loopCtx = ctx
-					ctxIndex = i
-					break
-				}
-			}
-
-			if loopCtx == nil {
-				log.Printf("ОШИБКА: не найден контекст цикла для начала %d", loopStartID)
-				pm.currentState = ProgramStateError
-				break
-			}
-
-			// Увеличиваем счетчик итераций
-			loopCtx.CurrentIter++
-			loopIterations[loopStartID] = loopCtx.CurrentIter
-
-			// Проверяем, нужно ли продолжать цикл
-			shouldContinue := loopCtx.IsForever || loopCtx.CurrentIter < loopCtx.MaxIter
-
-			log.Printf("Конец цикла %d. Итерация %d/%d. Продолжать: %v",
-				loopStartID, loopCtx.CurrentIter, loopCtx.MaxIter, shouldContinue)
-
-			// Выполняем блок конца цикла
-			if currentBlock.OnExecute != nil {
-				if err := currentBlock.OnExecute(); err != nil {
-					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
-					pm.currentState = ProgramStateError
-					break
-				}
-			}
-
-			if shouldContinue {
-				// Возвращаемся к началу цикла
-				startBlock, exists := pm.GetBlock(loopCtx.StartBlockID)
-				if !exists {
-					log.Printf("ОШИБКА: блок начала цикла %d не найден", loopCtx.StartBlockID)
-					pm.currentState = ProgramStateError
-					break
-				}
-
-				// Переходим к первому блоку после начала цикла
-				if startBlock.NextBlockID > 0 {
-					nextBlock, exists := pm.GetBlock(startBlock.NextBlockID)
-					if !exists {
-						log.Printf("ОШИБКА: следующий блок %d не найден", startBlock.NextBlockID)
-						pm.currentState = ProgramStateError
-						break
-					}
-					currentBlock = nextBlock
-				} else {
-					log.Printf("ОШИБКА: блок начала цикла %d не имеет следующего блока", loopCtx.StartBlockID)
-					pm.currentState = ProgramStateError
-					break
-				}
-			} else {
-				// Завершаем цикл
-				log.Printf("Завершение цикла %d после %d итераций", loopStartID, loopCtx.CurrentIter)
-
-				// Удаляем контекст из стека
-				if ctxIndex >= 0 {
-					loopStack = append(loopStack[:ctxIndex], loopStack[ctxIndex+1:]...)
-				}
-				delete(loopIterations, loopStartID)
-
-				// Переходим к следующему блоку после конца цикла
-				if currentBlock.NextBlockID > 0 {
-					nextBlock, exists := pm.GetBlock(currentBlock.NextBlockID)
-					if !exists {
-						log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
-						pm.currentState = ProgramStateError
-						break
-					}
-					currentBlock = nextBlock
-				} else {
-					log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
-					break
-				}
-			}
-
-			continue
-
-		default:
-			// Выполняем обычный блок
-			if currentBlock.OnExecute != nil {
-				startTime := time.Now()
-
-				if err := currentBlock.OnExecute(); err != nil {
-					log.Printf("ОШИБКА выполнения блока %d: %v", currentBlock.ID, err)
-					pm.currentState = ProgramStateError
-					break
-				}
-
-				executionTime := time.Since(startTime)
-				log.Printf("Блок %d выполнен за %v", currentBlock.ID, executionTime)
-			} else {
-				log.Printf("Блок %d не имеет функции выполнения", currentBlock.ID)
-			}
-		}
-
-		// Ищем следующий блок
-		if currentBlock.NextBlockID > 0 {
-			nextBlock, exists := pm.GetBlock(currentBlock.NextBlockID)
-			if !exists {
-				log.Printf("ОШИБКА: следующий блок %d не найден", currentBlock.NextBlockID)
-				pm.currentState = ProgramStateError
-				break
-			}
-			currentBlock = nextBlock
-		} else {
-			log.Printf("Достигнут конец программы (блок %d не имеет следующего блока)", currentBlock.ID)
-			break
-		}
-
-		if pm.currentState != ProgramStateRunning {
-			break
-		}
-
-		// Небольшая задержка для визуализации (кроме блоков ожидания)
-		if currentBlock.Type != BlockTypeWait {
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-
-	switch pm.currentState {
-	case ProgramStateRunning:
-		pm.currentState = ProgramStateStopped
-		log.Println("=== Программа завершена успешно ===")
-	case ProgramStateError:
-		log.Println("=== Программа завершена с ошибкой ===")
-	}
-
-	pm.ensureAllMotorsStopped()
-	log.Println("Все моторы остановлены")
-
-	// В конце выполнения сбрасываем выделение
-	if pm.currentBlockCB != nil {
-		pm.currentBlockCB(-1) // -1 означает сброс выделения
-	}
-
-	// В конце выполнения
-	pm.currentState = ProgramStateStopped
-	pm.notifyStateChange() // Уведомляем об изменении состояния
-	log.Println("=== Программа завершена успешно ===")
-}
-
-// ensureAllMotorsStopped гарантирует остановку всех моторов
-func (pm *ProgramManager) ensureAllMotorsStopped() {
-	log.Println("Гарантированная остановка всех моторов...")
-	for port := byte(1); port <= 6; port++ {
-		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
-			stopCmd := []byte{port, 0x01, 0x01, 0x00}
-			pm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
-		}
+// getBlockColor возвращает цвет для типа блока
+func getBlockColor(blockType BlockType) string {
+	switch blockType {
+	case BlockTypeStart:
+		return "#4CAF50"
+	case BlockTypeMotor:
+		return "#2196F3"
+	case BlockTypeLED:
+		return "#FF9800"
+	case BlockTypeWait:
+		return "#9E9E9E"
+	case BlockTypeLoopStart, BlockTypeLoopEnd:
+		return "#9C27B0"
+	case BlockTypeCondition:
+		return "#3F51B5"
+	case BlockTypeTiltSensor:
+		return "#673AB7"
+	case BlockTypeDistanceSensor:
+		return "#00BCD4"
+	case BlockTypeSound:
+		return "#FF5722"
+	case BlockTypeVoltageSensor:
+		return "#8BC34A"
+	case BlockTypeCurrentSensor:
+		return "#F44336"
+	case BlockTypeStop:
+		return "#F44336"
+	default:
+		return "#607D8B"
 	}
 }
 
-// StopProgram останавливает программу
-func (pm *ProgramManager) StopProgram() {
-	if pm.currentState == ProgramStateRunning {
-		pm.currentState = ProgramStateStopped
-		pm.notifyStateChange() // Уведомляем об изменении состояния
-		log.Println("Программа остановлена")
-		pm.ensureAllMotorsStopped()
-		pm.stopAllSounds()
-	}
-}
-
-// stopAllSounds останавливает все звуки
-func (pm *ProgramManager) stopAllSounds() {
-	log.Println("Остановка всех звуков...")
-	for port := byte(1); port <= 6; port++ {
-		if pm.deviceMgr != nil && pm.hubMgr != nil && pm.hubMgr.IsConnected() {
-			stopCmd := []byte{port, 0x03, 0x00}
-			pm.hubMgr.WriteCharacteristic("00001565-1212-efde-1523-785feabcd123", stopCmd)
-		}
-	}
-}
-
-// findBlockByID находит блок по ID
-func (pm *ProgramManager) findBlockByID(blockID int) *ProgramBlock {
-	for _, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			return block
+// findBlockByID ищет блок по ID в программе
+func (pm *ProgramManager) findBlockByID(id int) *ProgramBlock {
+	prog := pm.state.GetProgram()
+	for _, b := range prog.Blocks {
+		if b.ID == id {
+			return b
 		}
 	}
 	return nil
 }
 
-// ClearProgram очищает программу
-func (pm *ProgramManager) ClearProgram() {
-	pm.program.Blocks = make([]*ProgramBlock, 0)
-	pm.program.Connections = make([]*Connection, 0)
-	pm.currentState = ProgramStateStopped
-	pm.program.Modified = time.Now()
-	log.Println("Программа очищена")
-}
-
-// GetProgram возвращает текущую программу.
-func (pm *ProgramManager) GetProgram() *Program {
-	return pm.program
-}
-
-// GetBlock возвращает блок по ID
-func (pm *ProgramManager) GetBlock(blockID int) (*ProgramBlock, bool) {
-	for _, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			return block, true
+// GetLoopBlocks возвращает все блоки цикла (включая начало и конец)
+func (pm *ProgramManager) GetLoopBlocks(loopStartID int) ([]*ProgramBlock, bool) {
+	prog := pm.state.GetProgram()
+	loopStart := pm.findBlockByID(loopStartID)
+	if loopStart == nil || loopStart.Type != BlockTypeLoopStart {
+		return nil, false
+	}
+	loopEndID, ok := loopStart.Parameters["loopEndID"].(int)
+	if !ok {
+		return nil, false
+	}
+	var result []*ProgramBlock
+	inLoop := false
+	for _, block := range prog.Blocks {
+		if block.ID == loopStartID {
+			inLoop = true
 		}
-	}
-	return nil, false
-}
-
-// UpdateBlock обновляет параметры блока
-func (pm *ProgramManager) UpdateBlock(blockID int, params map[string]interface{}) bool {
-	for _, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			for key, value := range params {
-				block.Parameters[key] = value
-			}
-			pm.program.Modified = time.Now()
-			return true
+		if inLoop {
+			result = append(result, block)
 		}
-	}
-	return false
-}
-
-// AddConnection добавляет соединение между блоками
-func (pm *ProgramManager) AddConnection(fromBlockID, toBlockID int) bool {
-	fromBlock, fromExists := pm.GetBlock(fromBlockID)
-	_, toExists := pm.GetBlock(toBlockID)
-
-	if !fromExists || !toExists {
-		return false
-	}
-
-	fromBlock.NextBlockID = toBlockID
-
-	connection := &Connection{
-		FromBlockID: fromBlockID,
-		ToBlockID:   toBlockID,
-	}
-
-	pm.program.Connections = append(pm.program.Connections, connection)
-	pm.program.Modified = time.Now()
-
-	log.Printf("Добавлено соединение: блок %d -> блок %d", fromBlockID, toBlockID)
-	return true
-}
-
-// RemoveConnection удаляет соединение
-func (pm *ProgramManager) RemoveConnection(fromBlockID int) bool {
-	for i, conn := range pm.program.Connections {
-		if conn.FromBlockID == fromBlockID {
-			pm.program.Connections = append(pm.program.Connections[:i], pm.program.Connections[i+1:]...)
-			if block, exists := pm.GetBlock(fromBlockID); exists {
-				block.NextBlockID = 0
-			}
-			pm.program.Modified = time.Now()
-			log.Printf("Удалено соединение для блока %d", fromBlockID)
-			return true
-		}
-	}
-	return false
-}
-
-// RemoveBlock полностью удаляет блок из программы
-func (pm *ProgramManager) RemoveBlock(blockID int) bool {
-	log.Printf("Начинаем удаление блока %d из программы", blockID)
-
-	// Находим блок для удаления
-	var blockToRemove *ProgramBlock
-	var removeIndex int = -1
-
-	for i, block := range pm.program.Blocks {
-		if block.ID == blockID {
-			blockToRemove = block
-			removeIndex = i
+		if block.ID == loopEndID {
 			break
 		}
 	}
-
-	if blockToRemove == nil {
-		log.Printf("Блок %d не найден в программе", blockID)
-		return false
-	}
-
-	// Удаляем блок из списка
-	if removeIndex == 0 {
-		pm.program.Blocks = pm.program.Blocks[1:]
-	} else if removeIndex == len(pm.program.Blocks)-1 {
-		pm.program.Blocks = pm.program.Blocks[:removeIndex]
-	} else {
-		pm.program.Blocks = append(
-			pm.program.Blocks[:removeIndex],
-			pm.program.Blocks[removeIndex+1:]...,
-		)
-	}
-
-	// Удаляем все соединения, связанные с блоком
-	var newConnections []*Connection
-	for _, conn := range pm.program.Connections {
-		if conn.FromBlockID != blockID && conn.ToBlockID != blockID {
-			newConnections = append(newConnections, conn)
-		}
-	}
-	pm.program.Connections = newConnections
-
-	// Обновляем связи в оставшихся блоках
-	pm.rebuildConnections()
-
-	// Если удаляемый блок был начальным и остались другие блоки
-	if blockToRemove.IsStart && len(pm.program.Blocks) > 0 {
-		pm.program.Blocks[0].IsStart = true
-	}
-
-	pm.program.Modified = time.Now()
-	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(pm.program.Blocks))
-	return true
+	return result, true
 }
 
 // GetProgramState возвращает состояние программы
 func (pm *ProgramManager) GetProgramState() ProgramState {
-	return pm.currentState
+	return pm.state.GetProgramState()
 }
 
-// GetBlockBeforeStop возвращает блок, который идет перед блоком "Стоп"
-func (pm *ProgramManager) GetBlockBeforeStop() (*ProgramBlock, bool) {
-	// Находим блок "Стоп"
-	var stopBlock *ProgramBlock
-	for _, block := range pm.program.Blocks {
-		if block.Type == BlockTypeStop {
-			stopBlock = block
-			break
-		}
-	}
-
-	if stopBlock == nil {
-		return nil, false
-	}
-
-	// Находим блок, который ссылается на блок "Стоп"
-	for _, block := range pm.program.Blocks {
-		if block.NextBlockID == stopBlock.ID {
-			return block, true
-		}
-	}
-
-	return nil, false
-}
-
-// GetBlocksInOrder возвращает блоки в порядке их выполнения
-func (pm *ProgramManager) GetBlocksInOrder() []*ProgramBlock {
-	var ordered []*ProgramBlock
-	visited := make(map[int]bool)
-
-	// Находим стартовый блок
-	var current *ProgramBlock
-	for _, block := range pm.program.Blocks {
-		if block.IsStart {
-			current = block
-			break
-		}
-	}
-
-	// Если нет стартового блока, берем первый
-	if current == nil && len(pm.program.Blocks) > 0 {
-		current = pm.program.Blocks[0]
-	}
-
-	// Проходим по цепочке
-	for current != nil && !visited[current.ID] {
-		visited[current.ID] = true
-		ordered = append(ordered, current)
-
-		if current.NextBlockID == 0 {
-			break
-		}
-
-		next, exists := pm.GetBlock(current.NextBlockID)
-		if !exists {
-			break
-		}
-		current = next
-	}
-
-	return ordered
-}
-
-// rebuildConnections перестраивает все связи после удаления блока
-func (pm *ProgramManager) rebuildConnections() {
-	// Очищаем все существующие связи
-	pm.program.Connections = make([]*Connection, 0)
-
-	// Очищаем NextBlockID у всех блоков
-	for _, block := range pm.program.Blocks {
-		block.NextBlockID = 0
-	}
-
-	// Создаем новые связи по порядку
-	for i := 0; i < len(pm.program.Blocks)-1; i++ {
-		currentBlock := pm.program.Blocks[i]
-		nextBlock := pm.program.Blocks[i+1]
-
-		currentBlock.NextBlockID = nextBlock.ID
-		pm.program.Connections = append(pm.program.Connections, &Connection{
-			FromBlockID: currentBlock.ID,
-			ToBlockID:   nextBlock.ID,
-		})
-	}
-
-	log.Printf("Связи перестроены. Создано %d соединений", len(pm.program.Connections))
-}
-
-// SetStateChangeCallback устанавливает callback для отслеживания состояния
+// SetStateChangeCallback устанавливает callback для изменения состояния
 func (pm *ProgramManager) SetStateChangeCallback(callback func(state ProgramState)) {
 	pm.stateChangeCB = callback
+}
+
+// SetCurrentBlockCallback устанавливает callback для отслеживания текущего блока
+func (pm *ProgramManager) SetCurrentBlockCallback(callback func(blockID int)) {
+	pm.currentBlockCB = callback
 }
 
 // notifyStateChange уведомляет об изменении состояния
 func (pm *ProgramManager) notifyStateChange() {
 	if pm.stateChangeCB != nil {
-		pm.stateChangeCB(pm.currentState)
+		pm.stateChangeCB(pm.state.GetProgramState())
 	}
 }
 
-// FindLoopEndID находит ID конца цикла для заданного начала цикла
+// FindLoopEndID находит ID конца цикла по ID начала цикла.
 func (pm *ProgramManager) FindLoopEndID(loopStartID int) (int, bool) {
-	loopStartBlock, exists := pm.GetBlock(loopStartID)
-	if !exists || loopStartBlock.Type != BlockTypeLoopStart {
-		return 0, false
-	}
-
-	// Если уже есть сохраненный ID конца цикла
-	if loopEndID, ok := loopStartBlock.Parameters["loopEndID"].(int); ok && loopEndID > 0 {
-		return loopEndID, true
-	}
-
-	return 0, false
-}
-
-// FindLoopStartID находит ID начала цикла для заданного конца цикла
-func (pm *ProgramManager) FindLoopStartID(loopEndID int) (int, bool) {
-	loopEndBlock, exists := pm.GetBlock(loopEndID)
-	if !exists || loopEndBlock.Type != BlockTypeLoopEnd {
-		return 0, false
-	}
-
-	// Если уже есть сохраненный ID начала цикла
-	if loopStartID, ok := loopEndBlock.Parameters["loopStartID"].(int); ok && loopStartID > 0 {
-		return loopStartID, true
-	}
-
-	return 0, false
-}
-
-// GetLoopBlocks возвращает все блоки цикла (включая начало и конец)
-func (pm *ProgramManager) GetLoopBlocks(loopStartID int) ([]*ProgramBlock, bool) {
-	loopStartBlock, exists := pm.GetBlock(loopStartID)
-	if !exists || loopStartBlock.Type != BlockTypeLoopStart {
-		return nil, false
-	}
-
-	loopEndID, found := pm.FindLoopEndID(loopStartID)
-	if !found {
-		return nil, false
-	}
-
-	// Находим блоки между началом и концом цикла
-	var loopBlocks []*ProgramBlock
-	inLoop := false
-
-	for _, block := range pm.program.Blocks {
-		if block.ID == loopStartID {
-			inLoop = true
-		}
-
-		if inLoop {
-			loopBlocks = append(loopBlocks, block)
-		}
-
-		if block.ID == loopEndID {
+	prog := pm.state.GetProgram()
+	for _, block := range prog.Blocks {
+		if block.Type == BlockTypeLoopStart && block.ID == loopStartID {
+			if endID, ok := block.Parameters["loopEndID"].(int); ok && endID > 0 {
+				return endID, true
+			}
 			break
 		}
 	}
-
-	return loopBlocks, true
+	return 0, false
 }

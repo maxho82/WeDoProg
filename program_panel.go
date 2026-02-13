@@ -17,15 +17,17 @@ type ProgramPanel struct {
 	programMgr   *ProgramManager
 	layout       *ProgramLayout
 	connections  []*ConnectionLine
-	blockWidgets map[int]*DraggableBlock // карта виджетов блоков
-	// selectedBlock *ProgramBlock          // УДАЛЕНО – теперь хранится в gui.state
-	scale float32
+	blockWidgets map[int]*DraggableBlock
+	scale        float32
 
 	// Новые поля для управления валентными точками
 	valenceManager  *ValenceManager
-	valenceOverlay  *fyne.Container // Оверлей для валентных точек и временных линий
-	isInsertMode    bool            // Режим вставки нового блока
-	insertBlockType BlockType       // Тип блока для вставки
+	valenceOverlay  *fyne.Container
+	isInsertMode    bool
+	insertBlockType BlockType
+
+	// Для оптимизации обновления соединений
+	lastConnectorPositions map[int]fyne.Position // key = blockID*2 (+0 для верхнего, +1 для нижнего)
 }
 
 // ConnectionLine линия соединения между блоками
@@ -39,12 +41,13 @@ type ConnectionLine struct {
 // NewProgramPanel создает панель программирования
 func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 	panel := &ProgramPanel{
-		gui:          gui,
-		programMgr:   programMgr,
-		connections:  make([]*ConnectionLine, 0),
-		blockWidgets: make(map[int]*DraggableBlock),
-		scale:        1.0,
-		isInsertMode: false,
+		gui:                    gui,
+		programMgr:             programMgr,
+		connections:            make([]*ConnectionLine, 0),
+		blockWidgets:           make(map[int]*DraggableBlock),
+		scale:                  1.0,
+		isInsertMode:           false,
+		lastConnectorPositions: make(map[int]fyne.Position),
 	}
 
 	// Создаем кастомный layout
@@ -82,13 +85,8 @@ func (p *ProgramPanel) GetContainer() fyne.CanvasObject {
 func (p *ProgramPanel) SetInsertMode(blockType BlockType) {
 	p.isInsertMode = true
 	p.insertBlockType = blockType
-
-	// Показываем валентные точки для выбранного типа блока
 	p.valenceManager.ShowValencePoints(blockType)
-
-	// Обновляем оверлей
 	p.valenceOverlay.Refresh()
-
 	log.Printf("Режим вставки включен для типа блока: %v", blockType)
 }
 
@@ -96,16 +94,9 @@ func (p *ProgramPanel) SetInsertMode(blockType BlockType) {
 func (p *ProgramPanel) CancelInsertMode() {
 	p.isInsertMode = false
 	p.insertBlockType = 0
-
-	// Очищаем валентные точки
 	p.valenceManager.ClearPoints()
-
-	// Обновляем оверлей
 	p.valenceOverlay.Refresh()
-
 	log.Println("Режим вставки отменен")
-
-	// Уведомляем GUI об отмене
 	fyne.Do(func() {
 		if p.gui != nil {
 			p.gui.updateToolbarState()
@@ -116,7 +107,6 @@ func (p *ProgramPanel) CancelInsertMode() {
 
 // AddBlock добавляет блок на холст (старый метод для обратной совместимости)
 func (p *ProgramPanel) AddBlock(block *ProgramBlock) {
-	// Для обратной совместимости, если не в режиме вставки
 	if !p.isInsertMode {
 		p.AddBlockAtPosition(block, p.calculateInsertIndex())
 	}
@@ -131,16 +121,17 @@ func (p *ProgramPanel) AddBlockAtPosition(block *ProgramBlock, insertIndex int) 
 	}
 
 	// Проверяем особые случаи для блоков "Начать" и "Стоп"
+	prog := p.programMgr.state.GetProgram()
 	switch block.Type {
 	case BlockTypeStart:
-		for _, b := range p.programMgr.program.Blocks {
+		for _, b := range prog.Blocks {
 			if b.Type == BlockTypeStart {
 				log.Println("Блок 'Начать' уже существует в программе")
 				return
 			}
 		}
 	case BlockTypeStop:
-		for _, b := range p.programMgr.program.Blocks {
+		for _, b := range prog.Blocks {
 			if b.Type == BlockTypeStop {
 				log.Println("Блок 'Стоп' уже существует в программе")
 				return
@@ -183,28 +174,28 @@ func (p *ProgramPanel) AddBlockAtPosition(block *ProgramBlock, insertIndex int) 
 
 // calculateInsertIndex вычисляет индекс вставки нового блока (для обратной совместимости)
 func (p *ProgramPanel) calculateInsertIndex() int {
-	if len(p.programMgr.program.Blocks) == 0 {
+	prog := p.programMgr.state.GetProgram()
+	if len(prog.Blocks) == 0 {
 		return 0
 	}
 
-	selected := p.gui.GetSelectedBlock() // было p.selectedBlock
+	selected := p.gui.GetSelectedBlock()
 	if selected == nil {
-		for i, block := range p.programMgr.program.Blocks {
+		for i, block := range prog.Blocks {
 			if block.Type == BlockTypeStop {
 				return i
 			}
 		}
-		return len(p.programMgr.program.Blocks)
+		return len(prog.Blocks)
 	}
 
-	// Используем switch вместо цепочки if-else
 	switch selected.Type {
 	case BlockTypeLoopStart:
-		for i, block := range p.programMgr.program.Blocks {
+		for i, block := range prog.Blocks {
 			if block.ID == selected.ID {
 				loopEndID, found := p.programMgr.FindLoopEndID(block.ID)
 				if found {
-					for j, b := range p.programMgr.program.Blocks {
+					for j, b := range prog.Blocks {
 						if b.ID == loopEndID {
 							return j
 						}
@@ -213,48 +204,47 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 				return i + 1
 			}
 		}
-
 	case BlockTypeLoopEnd:
-		for i, block := range p.programMgr.program.Blocks {
+		for i, block := range prog.Blocks {
 			if block.ID == selected.ID {
 				return i + 1
 			}
 		}
-
 	case BlockTypeStop:
-		for i, block := range p.programMgr.program.Blocks {
+		for i, block := range prog.Blocks {
 			if block.ID == selected.ID {
 				return i
 			}
 		}
-
 	default:
-		for i, block := range p.programMgr.program.Blocks {
+		for i, block := range prog.Blocks {
 			if block.ID == selected.ID {
 				return i + 1
 			}
 		}
 	}
-
-	return len(p.programMgr.program.Blocks)
+	return len(prog.Blocks)
 }
 
 // insertBlockToProgram вставляет блок в программу по указанному индексу
 func (p *ProgramPanel) insertBlockToProgram(block *ProgramBlock, index int) {
+	prog := p.programMgr.state.GetProgram()
+	blocks := prog.Blocks
+
 	if index < 0 {
 		index = 0
 	}
-	if index > len(p.programMgr.program.Blocks) {
-		index = len(p.programMgr.program.Blocks)
+	if index > len(blocks) {
+		index = len(blocks)
 	}
 
-	if index == len(p.programMgr.program.Blocks) {
-		p.programMgr.program.Blocks = append(p.programMgr.program.Blocks, block)
+	if index == len(blocks) {
+		blocks = append(blocks, block)
 	} else {
-		p.programMgr.program.Blocks = append(p.programMgr.program.Blocks[:index],
-			append([]*ProgramBlock{block}, p.programMgr.program.Blocks[index:]...)...)
+		blocks = append(blocks[:index], append([]*ProgramBlock{block}, blocks[index:]...)...)
 	}
-
+	prog.Blocks = blocks
+	p.programMgr.state.SetProgram(prog)
 	log.Printf("Блок %d вставлен в программу на позицию %d", block.ID, index)
 }
 
@@ -270,18 +260,20 @@ func (p *ProgramPanel) updateAllConnections() {
 		}
 	}
 	p.connections = make([]*ConnectionLine, 0)
+	p.lastConnectorPositions = make(map[int]fyne.Position)
 
-	// Очищаем все связи в менеджере программ
-	p.programMgr.program.Connections = make([]*Connection, 0)
+	// Получаем программу
+	prog := p.programMgr.state.GetProgram()
+	prog.Connections = make([]*Connection, 0)
 
 	// Создаем связи между всеми блоками по порядку
-	for i := 0; i < len(p.programMgr.program.Blocks)-1; i++ {
-		currentBlock := p.programMgr.program.Blocks[i]
-		nextBlock := p.programMgr.program.Blocks[i+1]
+	for i := 0; i < len(prog.Blocks)-1; i++ {
+		currentBlock := prog.Blocks[i]
+		nextBlock := prog.Blocks[i+1]
 
 		currentBlock.NextBlockID = nextBlock.ID
 
-		p.programMgr.program.Connections = append(p.programMgr.program.Connections, &Connection{
+		prog.Connections = append(prog.Connections, &Connection{
 			FromBlockID: currentBlock.ID,
 			ToBlockID:   nextBlock.ID,
 		})
@@ -289,10 +281,11 @@ func (p *ProgramPanel) updateAllConnections() {
 		p.createVisualConnection(currentBlock.ID, nextBlock.ID)
 	}
 
-	if len(p.programMgr.program.Blocks) > 0 {
-		lastBlock := p.programMgr.program.Blocks[len(p.programMgr.program.Blocks)-1]
+	if len(prog.Blocks) > 0 {
+		lastBlock := prog.Blocks[len(prog.Blocks)-1]
 		lastBlock.NextBlockID = 0
 	}
+	p.programMgr.state.SetProgram(prog)
 }
 
 // createVisualConnection создает визуальное соединение между блоками
@@ -329,10 +322,14 @@ func (p *ProgramPanel) createVisualConnection(fromBlockID, toBlockID int) {
 func (p *ProgramPanel) RemoveBlock(blockID int) {
 	log.Printf("Начинаем удаление блока %d с холста", blockID)
 
+	prog := p.programMgr.state.GetProgram()
 	var blockToRemove *ProgramBlock
-	for _, block := range p.programMgr.program.Blocks {
+	var removeIndex = -1
+
+	for i, block := range prog.Blocks {
 		if block.ID == blockID {
 			blockToRemove = block
+			removeIndex = i
 			break
 		}
 	}
@@ -352,30 +349,22 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 		return
 	}
 
-	removeIndex := -1
-	for i, block := range p.programMgr.program.Blocks {
-		if block.ID == blockID {
-			removeIndex = i
-			break
-		}
-	}
-
 	if removeIndex == -1 {
 		log.Printf("Блок %d не найден в программе", blockID)
 		return
 	}
 
 	// Удаляем блок из программы
+	blocks := prog.Blocks
 	if removeIndex == 0 {
-		p.programMgr.program.Blocks = p.programMgr.program.Blocks[1:]
-	} else if removeIndex == len(p.programMgr.program.Blocks)-1 {
-		p.programMgr.program.Blocks = p.programMgr.program.Blocks[:removeIndex]
+		blocks = blocks[1:]
+	} else if removeIndex == len(blocks)-1 {
+		blocks = blocks[:removeIndex]
 	} else {
-		p.programMgr.program.Blocks = append(
-			p.programMgr.program.Blocks[:removeIndex],
-			p.programMgr.program.Blocks[removeIndex+1:]...,
-		)
+		blocks = append(blocks[:removeIndex], blocks[removeIndex+1:]...)
 	}
+	prog.Blocks = blocks
+	p.programMgr.state.SetProgram(prog)
 
 	// Удаляем виджет блока
 	if blockWidget, exists := p.blockWidgets[blockID]; exists {
@@ -403,17 +392,18 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 		p.ResetHighlight()
 	}
 
-	log.Printf("Блок %d удален с холста. Осталось блоков: %d", blockID, len(p.programMgr.program.Blocks))
+	log.Printf("Блок %d удален с холста. Осталось блоков: %d", blockID, len(prog.Blocks))
 }
 
 // RemoveBlockInternal - внутренний метод для удаления блока без проверок
 func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 	log.Printf("Внутреннее удаление блока %d", blockID)
 
+	prog := p.programMgr.state.GetProgram()
 	var blockToRemove *ProgramBlock
 	var removeIndex = -1
 
-	for i, block := range p.programMgr.program.Blocks {
+	for i, block := range prog.Blocks {
 		if block.ID == blockID {
 			blockToRemove = block
 			removeIndex = i
@@ -426,16 +416,16 @@ func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 		return
 	}
 
+	blocks := prog.Blocks
 	if removeIndex == 0 {
-		p.programMgr.program.Blocks = p.programMgr.program.Blocks[1:]
-	} else if removeIndex == len(p.programMgr.program.Blocks)-1 {
-		p.programMgr.program.Blocks = p.programMgr.program.Blocks[:removeIndex]
+		blocks = blocks[1:]
+	} else if removeIndex == len(blocks)-1 {
+		blocks = blocks[:removeIndex]
 	} else {
-		p.programMgr.program.Blocks = append(
-			p.programMgr.program.Blocks[:removeIndex],
-			p.programMgr.program.Blocks[removeIndex+1:]...,
-		)
+		blocks = append(blocks[:removeIndex], blocks[removeIndex+1:]...)
 	}
+	prog.Blocks = blocks
+	p.programMgr.state.SetProgram(prog)
 
 	if blockWidget, exists := p.blockWidgets[blockID]; exists {
 		for i, obj := range p.content.Objects {
@@ -449,13 +439,12 @@ func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 
 	p.removeConnectionsForBlock(blockID)
 
-	// Если удаляемый блок был выбран, сбрасываем выделение
 	if selected := p.gui.GetSelectedBlock(); selected != nil && selected.ID == blockID {
 		p.gui.SetSelectedBlock(nil)
 		p.ResetHighlight()
 	}
 
-	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(p.programMgr.program.Blocks))
+	log.Printf("Блок %d удален из программы. Осталось блоков: %d", blockID, len(prog.Blocks))
 }
 
 // removeConnectionsForBlock удаляет соединения для блока
@@ -481,9 +470,8 @@ func (p *ProgramPanel) Clear() {
 	p.content.Objects = nil
 	p.connections = make([]*ConnectionLine, 0)
 	p.blockWidgets = make(map[int]*DraggableBlock)
-	// p.selectedBlock = nil // удалено
+	p.lastConnectorPositions = make(map[int]fyne.Position)
 
-	// Очищаем валентные точки
 	p.valenceManager.ClearPoints()
 	p.valenceOverlay.Refresh()
 
@@ -548,6 +536,15 @@ func (p *ProgramPanel) updateConnections() {
 			fromPos := fromWidget.GetBottomConnectorPosition()
 			toPos := toWidget.GetTopConnectorPosition()
 
+			fromKey := conn.fromBlockID*2 + 0
+			toKey := conn.toBlockID*2 + 1
+			lastFrom, okFrom := p.lastConnectorPositions[fromKey]
+			lastTo, okTo := p.lastConnectorPositions[toKey]
+
+			if okFrom && okTo && lastFrom == fromPos && lastTo == toPos {
+				continue
+			}
+
 			conn.line.Position1 = fromPos
 			conn.line.Position2 = toPos
 			conn.line.StrokeWidth = 2 * p.scale
@@ -555,10 +552,11 @@ func (p *ProgramPanel) updateConnections() {
 				conn.line.StrokeWidth = 3 * p.scale
 			}
 			conn.line.Refresh()
+
+			p.lastConnectorPositions[fromKey] = fromPos
+			p.lastConnectorPositions[toKey] = toPos
 		}
 	}
-
-	// Обновляем оверлей с валентными точками
 	p.valenceOverlay.Refresh()
 }
 
@@ -572,14 +570,7 @@ func (p *ProgramPanel) HighlightExecutingBlock(blockID int) {
 		return
 	}
 
-	var block *ProgramBlock
-	for _, b := range p.programMgr.program.Blocks {
-		if b.ID == blockID {
-			block = b
-			break
-		}
-	}
-
+	block := p.programMgr.state.FindBlockByID(blockID)
 	if block != nil {
 		p.highlightBlockAsExecuting(block)
 	}
@@ -615,7 +606,7 @@ func (p *ProgramPanel) RemoveLoopBlocks(loopBlocks []*ProgramBlock) {
 
 // ApplyScale применяет масштаб ко всем элементам холста
 func (p *ProgramPanel) ApplyScale(newScale float32) {
-	if newScale < 0.5 || newScale > 3.0 {
+	if newScale < MinScale || newScale > MaxScale {
 		return
 	}
 
@@ -629,10 +620,12 @@ func (p *ProgramPanel) ApplyScale(newScale float32) {
 
 	p.content.Refresh()
 
+	// Сбрасываем кэш позиций коннекторов
+	p.lastConnectorPositions = make(map[int]fyne.Position)
+
 	// Обновляем валентные точки с новым масштабом
 	if p.isInsertMode {
 		p.valenceManager.ShowValencePoints(p.insertBlockType)
-		// Обновляем позиции точек с учетом нового масштаба
 		p.valenceManager.UpdatePointsPositions()
 	}
 	p.valenceOverlay.Refresh()
@@ -645,8 +638,8 @@ func (p *ProgramPanel) ApplyScale(newScale float32) {
 // ZoomIn увеличивает масштаб
 func (p *ProgramPanel) ZoomIn() {
 	newScale := p.scale * 1.2
-	if newScale > 3.0 {
-		newScale = 3.0
+	if newScale > MaxScale {
+		newScale = MaxScale
 	}
 	p.ApplyScale(newScale)
 }
@@ -654,8 +647,8 @@ func (p *ProgramPanel) ZoomIn() {
 // ZoomOut уменьшает масштаб
 func (p *ProgramPanel) ZoomOut() {
 	newScale := p.scale / 1.2
-	if newScale < 0.5 {
-		newScale = 0.5
+	if newScale < MinScale {
+		newScale = MinScale
 	}
 	p.ApplyScale(newScale)
 }
@@ -694,7 +687,6 @@ func (p *ProgramPanel) scrollToBlock(block *ProgramBlock) {
 		} else if offsetX > maxOffsetX {
 			offsetX = maxOffsetX
 		}
-
 		if offsetY < 0 {
 			offsetY = 0
 		} else if offsetY > maxOffsetY {

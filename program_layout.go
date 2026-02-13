@@ -26,10 +26,16 @@ func (l *ProgramLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 		return
 	}
 
+	// Получаем текущую программу из централизованного состояния
+	prog := l.programMgr.state.GetProgram()
+	if prog == nil {
+		return
+	}
+
 	// Располагаем блоки вертикально с отступами
 	currentY := float32(50 * l.scale)
 
-	for _, block := range l.programMgr.program.Blocks {
+	for _, block := range prog.Blocks {
 		// Ищем виджет для текущего блока
 		for _, obj := range objects {
 			if widget, ok := obj.(*DraggableBlock); ok && widget.block.ID == block.ID {
@@ -65,7 +71,12 @@ func (l *ProgramLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 
 // MinSize возвращает минимальный размер контейнера
 func (l *ProgramLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-	if l.programMgr == nil || len(l.programMgr.program.Blocks) == 0 {
+	if l.programMgr == nil {
+		return fyne.NewSize(2000*l.scale, 2000*l.scale)
+	}
+
+	prog := l.programMgr.state.GetProgram()
+	if prog == nil || len(prog.Blocks) == 0 {
 		// Возвращаем базовый размер, если нет блоков
 		return fyne.NewSize(2000*l.scale, 2000*l.scale)
 	}
@@ -74,7 +85,7 @@ func (l *ProgramLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	var totalHeight float32
 	var maxWidth float32 = 300 * l.scale // Минимальная ширина
 
-	for _, block := range l.programMgr.program.Blocks {
+	for _, block := range prog.Blocks {
 		blockHeight := float32(block.Height) * l.scale
 		blockWidth := float32(block.Width) * l.scale
 

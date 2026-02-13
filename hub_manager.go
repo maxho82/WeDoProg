@@ -11,7 +11,8 @@ import (
 	tinybluetooth "tinygo.org/x/bluetooth"
 )
 
-// HubManager управляет подключением к WeDo 2.0 хабу
+// HubManager управляет подключением к WeDo 2.0 хабу.
+// Больше не хранит устройства, только уведомляет через callback.
 type HubManager struct {
 	adapter                   *tinybluetooth.Adapter
 	device                    tinybluetooth.Device
@@ -23,35 +24,33 @@ type HubManager struct {
 	services                  map[string]tinybluetooth.DeviceService
 	characteristics           map[string]tinybluetooth.DeviceCharacteristic
 	subscribedCharacteristics map[string]bool
-	devices                   map[byte]*Device
 
 	// Callback'и
 	batteryUpdateCallback   func(batteryLevel int)
 	hubInfoUpdateCallback   func(info *HubInfo)
-	deviceUpdateCallback    func(portID byte, device *Device)
+	deviceUpdateCallback    func(portID byte, device *Device) // единственный канал для устройств
 	connectionStateCallback func(isConnected bool)
 }
 
-// NewHubManager создает новый менеджер хаба
+// NewHubManager создаёт новый менеджер хаба
 func NewHubManager() (*HubManager, error) {
 	adapter := tinybluetooth.DefaultAdapter
 	if adapter == nil {
 		return nil, fmt.Errorf("BLE адаптер не найден")
 	}
-
 	if err := adapter.Enable(); err != nil {
 		return nil, fmt.Errorf("ошибка включения BLE адаптера: %v", err)
 	}
-
 	return &HubManager{
 		adapter:                   adapter,
 		hubInfo:                   &HubInfo{},
 		services:                  make(map[string]tinybluetooth.DeviceService),
 		characteristics:           make(map[string]tinybluetooth.DeviceCharacteristic),
 		subscribedCharacteristics: make(map[string]bool),
-		devices:                   make(map[byte]*Device),
 	}, nil
 }
+
+// --- Сканирование и подключение ---
 
 // ScanForHubs сканирует WeDo 2.0 хабы
 func (hm *HubManager) ScanForHubs(timeout time.Duration) ([]HubInfo, error) {
@@ -69,12 +68,10 @@ func (hm *HubManager) ScanForHubs(timeout time.Duration) ([]HubInfo, error) {
 			return
 		default:
 		}
-
 		name := result.LocalName()
 		address := result.Address.String()
 		rssi := result.RSSI
 
-		// Ищем WeDo 2.0 хаб
 		if (strings.Contains(strings.ToUpper(name), "WEDO") ||
 			strings.Contains(strings.ToUpper(name), "LEGO") ||
 			strings.Contains(strings.ToUpper(name), "LPF2") ||
@@ -94,14 +91,12 @@ func (hm *HubManager) ScanForHubs(timeout time.Duration) ([]HubInfo, error) {
 			cancel()
 		}
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("ошибка сканирования: %v", err)
 	}
 
 	<-ctx.Done()
 	hm.adapter.StopScan()
-
 	log.Printf("Сканирование завершено. Найдено хабов: %d", len(foundHubs))
 	return foundHubs, nil
 }
@@ -119,11 +114,8 @@ func (hm *HubManager) Connect(address string) error {
 
 	var targetDevice tinybluetooth.ScanResult
 	found := false
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	log.Println("Поиск устройства для подключения...")
 
 	err := hm.adapter.Scan(func(adapter *tinybluetooth.Adapter, result tinybluetooth.ScanResult) {
 		if result.Address.String() == address {
@@ -134,11 +126,9 @@ func (hm *HubManager) Connect(address string) error {
 			cancel()
 		}
 	})
-
 	if err != nil {
 		return fmt.Errorf("ошибка сканирования: %v", err)
 	}
-
 	<-ctx.Done()
 	hm.adapter.StopScan()
 
@@ -146,7 +136,6 @@ func (hm *HubManager) Connect(address string) error {
 		return fmt.Errorf("устройство с адресом %s не найдено", address)
 	}
 
-	log.Printf("Устанавливаем соединение с %s...", address)
 	device, err := hm.adapter.Connect(targetDevice.Address, tinybluetooth.ConnectionParams{})
 	if err != nil {
 		return fmt.Errorf("ошибка подключения: %v", err)
@@ -160,21 +149,16 @@ func (hm *HubManager) Connect(address string) error {
 	hm.hubInfo.Address = address
 	hm.hubInfo.LastUpdated = time.Now()
 
-	log.Println("Обнаружение служб и характеристик...")
-	err = hm.discoverAllServices()
-	if err != nil {
+	if err = hm.discoverAllServices(); err != nil {
 		log.Printf("Предупреждение: %v", err)
 	}
 
-	log.Println("Чтение информации об устройстве...")
 	go hm.readAllDeviceInfo()
-
 	go hm.subscribeToImportantNotifications()
 
 	if hm.connectionStateCallback != nil {
 		hm.connectionStateCallback(true)
 	}
-
 	return nil
 }
 
@@ -365,27 +349,19 @@ func (hm *HubManager) handlePortNotification(data []byte) {
 		log.Printf("Сообщение слишком короткое: %x", data)
 		return
 	}
-
 	log.Printf("Обработка порта: данные=%x, длина=%d", data, len(data))
 
 	if len(data) == 2 {
 		portID := data[0]
 		eventType := data[1]
-
-		if eventType == 0x00 {
-			log.Printf("Короткое сообщение об отключении: порт %d", portID)
-			if isExternalPort(portID) {
-				hm.handleDeviceDisconnection(portID)
-			}
+		if eventType == 0x00 && isExternalPort(portID) {
+			log.Printf("Устройство отключено от порта %d", portID)
+			hm.notifyDeviceDisconnected(portID)
 		}
 	} else if len(data) >= 4 {
 		portID := data[0]
 		connectionEvent := data[1]
-		hubID := data[2]
 		deviceType := data[3]
-
-		log.Printf("Длинное сообщение: порт=%d, событие=0x%02x, хаб=%d, тип=0x%02x",
-			portID, connectionEvent, hubID, deviceType)
 
 		if !isExternalPort(portID) {
 			return
@@ -397,29 +373,22 @@ func (hm *HubManager) handlePortNotification(data []byte) {
 				log.Printf("Порт %d: устройство подключено, но тип неизвестен (0x00)", portID)
 				return
 			}
-
-			mappedDeviceType := hm.mapDeviceType(deviceType)
-			if mappedDeviceType == 0x00 {
+			mappedType := hm.mapDeviceType(deviceType)
+			if mappedType == 0x00 {
 				log.Printf("Порт %d: неизвестный тип устройства 0x%02x", portID, deviceType)
 				return
 			}
-
-			log.Printf("Порт %d: подключено устройство типа 0x%02x (%s)",
-				portID, mappedDeviceType, hm.getDeviceName(mappedDeviceType))
-
-			hm.handleDeviceConnection(portID, mappedDeviceType, data)
+			log.Printf("Порт %d: подключено устройство типа 0x%02x (%s)", portID, mappedType, hm.getDeviceName(mappedType))
+			hm.notifyDeviceConnected(portID, mappedType, data)
 		case 0x00:
 			log.Printf("Порт %d: устройство отключено (длинный формат)", portID)
-			hm.handleDeviceDisconnection(portID)
+			hm.notifyDeviceDisconnected(portID)
 		}
 	}
 }
 
-// handleDeviceConnection обрабатывает подключение устройства
-func (hm *HubManager) handleDeviceConnection(portID byte, deviceType byte, _ []byte) {
-	log.Printf("Устройство подключено к порту %d, тип: 0x%02x (%s)",
-		portID, deviceType, hm.getDeviceName(deviceType))
-
+// notifyDeviceConnected создаёт устройство и вызывает callback.
+func (hm *HubManager) notifyDeviceConnected(portID byte, deviceType byte, _ []byte) {
 	device := &Device{
 		PortID:      portID,
 		DeviceType:  deviceType,
@@ -428,51 +397,30 @@ func (hm *HubManager) handleDeviceConnection(portID byte, deviceType byte, _ []b
 		LastUpdate:  time.Now(),
 		Properties:  make(map[string]interface{}),
 	}
-
-	hm.devices[portID] = device
-
+	if hm.deviceUpdateCallback != nil {
+		hm.deviceUpdateCallback(portID, device)
+	}
+	// Настройка устройства выполняется асинхронно
 	go func() {
 		time.Sleep(1 * time.Second)
-		log.Printf("Настройка устройства на порту %d (тип: 0x%02x)", portID, deviceType)
-
-		err := hm.configureDevice(portID, deviceType)
-		if err != nil {
+		if err := hm.configureDevice(portID, deviceType); err != nil {
 			log.Printf("Ошибка настройки устройства на порту %d: %v", portID, err)
 		} else {
 			log.Printf("Устройство на порту %d успешно настроено", portID)
 		}
-
-		if hm.deviceUpdateCallback != nil {
-			hm.deviceUpdateCallback(portID, device)
-		}
 	}()
-
-	log.Printf("Устройство обнаружено: %s (порт %d)", device.Name, portID)
 }
 
-// handleDeviceDisconnection обрабатывает отключение устройства
-func (hm *HubManager) handleDeviceDisconnection(portID byte) {
-	log.Printf("Устройство отключено от порта %d", portID)
-
-	if device, exists := hm.devices[portID]; exists {
-		device.IsConnected = false
-		device.LastUpdate = time.Now()
-		log.Printf("Устройство отключено: %s (порт %d)", device.Name, portID)
-
-		if hm.deviceUpdateCallback != nil {
-			hm.deviceUpdateCallback(portID, device)
-		}
-	} else {
-		device := &Device{
-			PortID:      portID,
-			IsConnected: false,
-			LastUpdate:  time.Now(),
-			Properties:  make(map[string]interface{}),
-		}
-
-		if hm.deviceUpdateCallback != nil {
-			hm.deviceUpdateCallback(portID, device)
-		}
+// notifyDeviceDisconnected сообщает об отключении.
+func (hm *HubManager) notifyDeviceDisconnected(portID byte) {
+	device := &Device{
+		PortID:      portID,
+		IsConnected: false,
+		LastUpdate:  time.Now(),
+		Properties:  make(map[string]interface{}),
+	}
+	if hm.deviceUpdateCallback != nil {
+		hm.deviceUpdateCallback(portID, device)
 	}
 }
 
@@ -502,7 +450,7 @@ func (hm *HubManager) configureDevice(portID byte, deviceType byte) error {
 		return nil
 	}
 
-	if err := hm.WriteCharacteristic("00001563-1212-efde-1523-785feabcd123", cmd); err != nil {
+	if err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, cmd); err != nil {
 		return fmt.Errorf("ошибка настройки устройства: %v", err)
 	}
 
@@ -532,29 +480,43 @@ func (hm *HubManager) getDeviceName(deviceType byte) string {
 	}
 }
 
+// mapDeviceType преобразует WeDo 2.0 тип устройства в наш формат
+func (hm *HubManager) mapDeviceType(deviceType byte) byte {
+	switch deviceType {
+	case 0x01:
+		return DEVICE_TYPE_MOTOR
+	case 0x22:
+		return DEVICE_TYPE_TILT_SENSOR
+	case 0x23:
+		return DEVICE_TYPE_MOTION_SENSOR
+	case 0x17:
+		return DEVICE_TYPE_RGB_LIGHT
+	case 0x16:
+		return DEVICE_TYPE_PIEZO_TONE
+	case 0x14:
+		return DEVICE_TYPE_VOLTAGE
+	case 0x15:
+		return DEVICE_TYPE_CURRENT
+	default:
+		return 0x00
+	}
+}
+
 // WriteCharacteristic записывает данные в характеристику
 func (hm *HubManager) WriteCharacteristic(uuid string, data []byte) error {
 	hm.connectionMutex.RLock()
+	defer hm.connectionMutex.RUnlock()
 
 	if !hm.isConnected {
-		hm.connectionMutex.RUnlock()
 		return fmt.Errorf("не подключено к хабу")
 	}
 
 	char, exists := hm.characteristics[uuid]
 	if !exists {
-		hm.connectionMutex.RUnlock()
 		return fmt.Errorf("характеристика %s не найдена", uuid)
 	}
 
-	if !hm.isConnected {
-		hm.connectionMutex.RUnlock()
-		return fmt.Errorf("потеряно подключение к хабу")
-	}
-
 	_, err := char.WriteWithoutResponse(data)
-	hm.connectionMutex.RUnlock()
-
 	if err != nil {
 		log.Printf("Ошибка отправки данных: %v", err)
 		return fmt.Errorf("ошибка отправки данных: %v", err)
@@ -650,21 +612,12 @@ func (hm *HubManager) autoDetectDevicesV2() {
 	log.Println("Ожидание уведомлений о подключенных устройствах...")
 	time.Sleep(5 * time.Second)
 
-	log.Println("Проверка обнаруженных устройств:")
-	for port := byte(1); port <= 6; port++ {
-		if device, exists := hm.devices[port]; exists && device.IsConnected {
-			log.Printf("  Порт %d: %s", port, device.Name)
-		}
-	}
-
+	// Ручное обнаружение на портах 1,2,6
 	portsToCheck := []byte{1, 2, 6}
-
 	for _, portID := range portsToCheck {
-		if _, exists := hm.devices[portID]; !exists {
-			log.Printf("Порт %d не обнаружен автоматически, запускаем ручное обнаружение...", portID)
-			hm.manualDeviceDetection(portID)
-			time.Sleep(3 * time.Second)
-		}
+		log.Printf("Ручное обнаружение на порту %d...", portID)
+		hm.manualDeviceDetection(portID)
+		time.Sleep(3 * time.Second)
 	}
 
 	log.Println("=== Обнаружение устройств завершено ===")
@@ -707,27 +660,13 @@ func (hm *HubManager) manualDeviceDetection(portID byte) {
 				log.Printf("Порт %d: не удалось запустить мотор - %v", portID, err)
 				continue
 			}
-
 			time.Sleep(300 * time.Millisecond)
 			stopCmd := []byte{portID, 0x01, 0x01, 0x00}
-			hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
+			_ = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
 		}
 
-		device := &Device{
-			PortID:      portID,
-			DeviceType:  dev.deviceType,
-			Name:        dev.name,
-			IsConnected: true,
-			LastUpdate:  time.Now(),
-			Properties:  make(map[string]interface{}),
-		}
-
-		hm.devices[portID] = device
-
-		if hm.deviceUpdateCallback != nil {
-			hm.deviceUpdateCallback(portID, device)
-		}
-
+		// Уведомляем о подключении
+		hm.notifyDeviceConnected(portID, dev.deviceType, nil)
 		log.Printf("Порт %d: обнаружен %s", portID, dev.name)
 		return
 	}
@@ -744,7 +683,7 @@ func (hm *HubManager) detectBuiltInLED() {
 	if err != nil {
 		log.Printf("Порт 6: ошибка настройки RGB режима - %v", err)
 		setupCmd = []byte{0x01, 0x02, 6, 0x17, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
-		hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
+		_ = hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
 	}
 
 	time.Sleep(1 * time.Second)
@@ -756,43 +695,8 @@ func (hm *HubManager) detectBuiltInLED() {
 		return
 	}
 
-	device := &Device{
-		PortID:      6,
-		DeviceType:  DEVICE_TYPE_RGB_LIGHT,
-		Name:        "RGB светодиод",
-		IsConnected: true,
-		LastUpdate:  time.Now(),
-		Properties:  make(map[string]interface{}),
-	}
-
-	hm.devices[6] = device
+	hm.notifyDeviceConnected(6, DEVICE_TYPE_RGB_LIGHT, nil)
 	log.Println("Порт 6: RGB светодиод обнаружен (зеленый)")
-
-	if hm.deviceUpdateCallback != nil {
-		hm.deviceUpdateCallback(6, device)
-	}
-}
-
-// mapDeviceType преобразует WeDo 2.0 тип устройства в наш формат
-func (hm *HubManager) mapDeviceType(deviceType byte) byte {
-	switch deviceType {
-	case 0x01:
-		return DEVICE_TYPE_MOTOR
-	case 0x22:
-		return DEVICE_TYPE_TILT_SENSOR
-	case 0x23:
-		return DEVICE_TYPE_MOTION_SENSOR
-	case 0x17:
-		return DEVICE_TYPE_RGB_LIGHT
-	case 0x16:
-		return DEVICE_TYPE_PIEZO_TONE
-	case 0x14:
-		return DEVICE_TYPE_VOLTAGE
-	case 0x15:
-		return DEVICE_TYPE_CURRENT
-	default:
-		return 0x00
-	}
 }
 
 // isExternalPort проверяет, является ли порт внешним
@@ -805,11 +709,9 @@ func bytesToHexString(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
-
 	hexStr := make([]string, len(data))
 	for i, b := range data {
 		hexStr[i] = fmt.Sprintf("%02X", b)
 	}
-
 	return strings.Join(hexStr, " ")
 }

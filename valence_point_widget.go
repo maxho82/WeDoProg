@@ -19,30 +19,22 @@ type ValencePointWidget struct {
 	isHovered bool
 }
 
-// NewValencePointWidget создает виджет валентной точки
 func NewValencePointWidget(point *ValencePoint, manager *ValenceManager) *ValencePointWidget {
 	w := &ValencePointWidget{
 		point:     point,
 		manager:   manager,
 		isHovered: false,
 	}
-
 	w.ExtendBaseWidget(w)
-
-	// Создаем круг для отображения точки
-	w.circle = canvas.NewCircle(color.NRGBA{R: 255, G: 215, B: 0, A: 255}) // Золотой
+	w.circle = canvas.NewCircle(color.NRGBA{R: 255, G: 215, B: 0, A: 255})
 	w.circle.StrokeWidth = 1
 	w.circle.StrokeColor = color.White
-
 	return w
 }
 
-// CreateRenderer создает рендерер для виджета
+// CreateRenderer — использует константы для размера.
 func (w *ValencePointWidget) CreateRenderer() fyne.WidgetRenderer {
-	return &valencePointRenderer{
-		widget: w,
-		circle: w.circle,
-	}
+	return &valencePointRenderer{widget: w, circle: w.circle}
 }
 
 // Tapped обработка клика по точке

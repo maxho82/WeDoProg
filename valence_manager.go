@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	//"fyne.io/fyne/v2/widget"
 )
 
 // ValenceManager управляет валентными точками для вставки блоков
@@ -58,7 +57,8 @@ func (vm *ValenceManager) ShowValencePoints(blockType BlockType) {
 	vm.selectedType = blockType
 	vm.ClearPoints()
 
-	program := vm.programPanel.programMgr.program
+	// Получаем программу через state (исправлено: было programMgr.program)
+	program := vm.programPanel.programMgr.state.GetProgram()
 
 	if len(program.Blocks) == 0 {
 		// Если программа пустая, показываем точку для вставки первого блока
@@ -108,7 +108,8 @@ func (vm *ValenceManager) addStartPoint() {
 
 // addPointsForAllPositions добавляет точки для всех возможных позиций вставки
 func (vm *ValenceManager) addPointsForAllPositions() {
-	program := vm.programPanel.programMgr.program
+	// Получаем программу через state
+	program := vm.programPanel.programMgr.state.GetProgram()
 
 	// 1. Точка для вставки в начало (перед первым блоком, если он не "Начать")
 	if len(program.Blocks) > 0 && program.Blocks[0].Type != BlockTypeStart {
@@ -263,7 +264,7 @@ func (vm *ValenceManager) addPointWidget(point *ValencePoint) {
 	pointWidget := NewValencePointWidget(point, vm)
 
 	// Размер точки должен масштабироваться
-	pointSize := float32(16) * scale
+	pointSize := float32(ValencePointBaseSize) * scale
 	pointWidget.Resize(fyne.NewSize(pointSize, pointSize))
 
 	// Позиция должна учитывать смещение для центрирования
@@ -289,7 +290,7 @@ func (vm *ValenceManager) ShowTempConnection(point *ValencePoint) {
 	}
 
 	// Создаем временные линии для предварительного просмотра
-	vm.createTempLinesForPoint(point) // Убрали tempBlock
+	vm.createTempLinesForPoint(point)
 
 	vm.hoveredPoint = point
 	vm.refreshDisplay()
@@ -303,8 +304,8 @@ func (vm *ValenceManager) createTempBlockForPreview() *ProgramBlock {
 		Type:       vm.selectedType,
 		Title:      "Новый блок",
 		Parameters: make(map[string]interface{}),
-		Width:      180,
-		Height:     100,
+		Width:      DefaultBlockWidth,
+		Height:     DefaultBlockHeight,
 	}
 
 	// Настраиваем блок
@@ -499,6 +500,9 @@ func (vm *ValenceManager) InsertBlockAtPoint(point *ValencePoint) bool {
 
 	// Определяем позицию вставки
 	var insertIndex int
+	// Получаем программу через state для определения индекса
+	program := vm.programPanel.programMgr.state.GetProgram()
+
 	switch point.InsertType {
 	case ValenceInsertStart:
 		// В начало программы
@@ -506,7 +510,7 @@ func (vm *ValenceManager) InsertBlockAtPoint(point *ValencePoint) bool {
 
 	case ValenceInsertBetween:
 		// Между двумя блоками
-		for i, block := range vm.programPanel.programMgr.program.Blocks {
+		for i, block := range program.Blocks {
 			if block.ID == point.FromBlock.ID {
 				insertIndex = i + 1
 				break
@@ -515,11 +519,11 @@ func (vm *ValenceManager) InsertBlockAtPoint(point *ValencePoint) bool {
 
 	case ValenceInsertEnd:
 		// В конец программы
-		insertIndex = len(vm.programPanel.programMgr.program.Blocks)
+		insertIndex = len(program.Blocks)
 
 	case ValenceInsertLoop:
 		// Внутри цикла
-		for i, block := range vm.programPanel.programMgr.program.Blocks {
+		for i, block := range program.Blocks {
 			if block.ID == point.FromBlock.ID {
 				insertIndex = i + 1
 				break
@@ -601,7 +605,7 @@ func (vm *ValenceManager) UpdatePointsPositions() {
 
 		// Обновляем позицию виджета точки
 		if i < len(vm.pointWidgets) {
-			pointSize := float32(16) * scale
+			pointSize := float32(ValencePointBaseSize) * scale
 			offset := pointSize / 2
 			vm.pointWidgets[i].Move(fyne.NewPos(
 				point.Position.X-offset,
