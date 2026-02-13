@@ -22,6 +22,7 @@ type MainGUI struct {
 	hubMgr     *HubManager
 	deviceMgr  *DeviceManager
 	programMgr *ProgramManager
+	state      *AppState // Добавлено состояние с мьютексом
 
 	// Виджеты
 	statusLabel      *widget.Label
@@ -43,11 +44,11 @@ type MainGUI struct {
 	hubInfoContainer *fyne.Container
 	devicesContainer *fyne.Container
 
-	// Данные
-	connectedHub     *HubInfo
-	connectedDevices map[byte]*Device
-	availableBlocks  map[BlockType]bool
-	selectedBlock    *ProgramBlock
+	// Данные (удалены поля, теперь они в state)
+	// connectedHub     *HubInfo
+	// connectedDevices map[byte]*Device
+	// availableBlocks  map[BlockType]bool
+	// selectedBlock    *ProgramBlock
 
 	// Кнопки блоков для управления их состоянием
 	blockButtons map[BlockType]*widget.Button
@@ -63,12 +64,13 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	programMgr := NewProgramManager(hubMgr, deviceMgr)
 
 	gui := &MainGUI{
-		window:           window,
-		hubMgr:           hubMgr,
-		deviceMgr:        deviceMgr,
-		programMgr:       programMgr,
-		connectedDevices: make(map[byte]*Device),
-		availableBlocks:  make(map[BlockType]bool),
+		window:     window,
+		hubMgr:     hubMgr,
+		deviceMgr:  deviceMgr,
+		programMgr: programMgr,
+		state:      NewAppState(), // Инициализируем состояние
+		// connectedDevices: make(map[byte]*Device), // удалено
+		// availableBlocks:  make(map[BlockType]bool), // удалено
 	}
 
 	hubMgr.SetBatteryUpdateCallback(gui.UpdateBatteryDisplay)
@@ -94,13 +96,23 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	return gui
 }
 
+// GetSelectedBlock возвращает текущий выбранный блок (безопасно)
+func (gui *MainGUI) GetSelectedBlock() *ProgramBlock {
+	return gui.state.GetSelectedBlock()
+}
+
+// SetSelectedBlock устанавливает текущий выбранный блок (безопасно)
+func (gui *MainGUI) SetSelectedBlock(block *ProgramBlock) {
+	gui.state.SetSelectedBlock(block)
+}
+
 // Метод для выделения выполняемого блока
 func (gui *MainGUI) highlightExecutingBlock(blockID int) {
 	if blockID == -1 {
 		// Сбрасываем выделение
 		gui.programPanel.HighlightExecutingBlock(-1)
 		gui.programPanel.SetSelectedBlock(nil)
-		gui.selectedBlock = nil
+		gui.SetSelectedBlock(nil) // используем state
 		return
 	}
 
@@ -298,15 +310,15 @@ func (gui *MainGUI) setupKeyboardShortcuts() {
 	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
 		switch event.Name {
 		case fyne.KeyDelete, fyne.KeyBackspace:
-			if gui.selectedBlock != nil {
+			if gui.GetSelectedBlock() != nil {
 				gui.deleteSelectedBlock()
 			}
 
 		case fyne.KeyEscape: // Escape - снять выделение или отменить режим вставки
 			if gui.programPanel.IsInsertMode() {
 				gui.CancelInsertMode()
-			} else if gui.selectedBlock != nil {
-				gui.selectedBlock = nil
+			} else if gui.GetSelectedBlock() != nil {
+				gui.SetSelectedBlock(nil)
 				gui.programPanel.SetSelectedBlock(nil)
 				gui.clearPropertiesPanel()
 			}
@@ -448,15 +460,16 @@ func (gui *MainGUI) updateScaleLabel() {
 
 // deleteSelectedBlock удаляет выбранный блок
 func (gui *MainGUI) deleteSelectedBlock() {
-	if gui.selectedBlock == nil {
+	selected := gui.GetSelectedBlock()
+	if selected == nil {
 		return
 	}
 
-	blockID := gui.selectedBlock.ID
-	blockTitle := gui.selectedBlock.Title
+	blockID := selected.ID
+	blockTitle := selected.Title
 
 	// Проверяем, является ли блок частью цикла
-	if gui.selectedBlock.Type == BlockTypeLoopStart || gui.selectedBlock.Type == BlockTypeLoopEnd {
+	if selected.Type == BlockTypeLoopStart || selected.Type == BlockTypeLoopEnd {
 		gui.deleteLoopWithConfirmation(blockID)
 		return
 	}
@@ -474,7 +487,7 @@ func (gui *MainGUI) deleteSelectedBlock() {
 				gui.clearPropertiesPanel()
 
 				// Сбрасываем выделение
-				gui.selectedBlock = nil
+				gui.SetSelectedBlock(nil)
 
 				log.Printf("Блок %d удален", blockID)
 
@@ -538,7 +551,7 @@ func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
 				gui.clearPropertiesPanel()
 
 				// Сбрасываем выделение
-				gui.selectedBlock = nil
+				gui.SetSelectedBlock(nil)
 				gui.programPanel.SetSelectedBlock(nil)
 
 				log.Printf("Цикл удален (начало: %d, конец: %d)", loopStartID, loopEndID)
@@ -607,7 +620,7 @@ func (gui *MainGUI) createLoopBlocks() {
 
 	// Выделяем начало цикла
 	gui.programPanel.SetSelectedBlock(loopStartBlock)
-	gui.selectedBlock = loopStartBlock
+	gui.SetSelectedBlock(loopStartBlock)
 
 	// Обновляем состояние кнопок
 	gui.updateBlockButtonsState()
@@ -652,7 +665,7 @@ func (gui *MainGUI) getBlockName(blockType BlockType) string {
 
 // showBlockProperties показывает свойства выбранного блока
 func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
-	gui.selectedBlock = block
+	gui.SetSelectedBlock(block)
 
 	if gui.propertiesPanel != nil {
 		container, ok := gui.propertiesPanel.Content.(*fyne.Container)
@@ -768,8 +781,11 @@ func (gui *MainGUI) updateConnectionStatus(isConnected bool) {
 			gui.statusLabel.SetText("Не подключено")
 			gui.connectButton.Enable()
 			gui.disconnectButton.Disable()
-			gui.connectedHub = nil
-			gui.connectedDevices = make(map[byte]*Device)
+			// Очищаем состояние
+			gui.state.SetConnectedHub(nil)
+			gui.state.ClearDevices()
+			gui.state.SetAvailableBlocks(make(map[BlockType]bool))
+			gui.state.SetSelectedBlock(nil)
 			gui.clearDeviceDisplay()
 		}
 
@@ -781,6 +797,7 @@ func (gui *MainGUI) updateConnectionStatus(isConnected bool) {
 
 // UpdateBatteryDisplay обновляет отображение батареи
 func (gui *MainGUI) UpdateBatteryDisplay(batteryLevel int) {
+	gui.state.UpdateHubBattery(batteryLevel) // обновляем состояние
 	fyne.Do(func() {
 		if gui.batteryProgress != nil {
 			gui.batteryProgress.SetValue(float64(batteryLevel) / 100)
@@ -791,8 +808,8 @@ func (gui *MainGUI) UpdateBatteryDisplay(batteryLevel int) {
 
 // UpdateHubInfoDisplay обновляет отображение информации о хабе
 func (gui *MainGUI) UpdateHubInfoDisplay(info *HubInfo) {
+	gui.state.SetConnectedHub(info) // сохраняем в состояние
 	fyne.Do(func() {
-		gui.connectedHub = info
 		gui.updateHubInfoUI(info)
 	})
 }
@@ -802,8 +819,9 @@ func (gui *MainGUI) UpdateDeviceDisplay(portID byte, device *Device) {
 	log.Printf("UpdateDeviceDisplay: порт %d, устройство: %s, подключено: %v",
 		portID, device.Name, device.IsConnected)
 
+	gui.state.UpdateDevice(portID, device) // сохраняем в состояние
+
 	fyne.Do(func() {
-		gui.connectedDevices[portID] = device
 		gui.updateAvailableBlocks()
 		gui.updateDeviceList()
 	})
@@ -925,18 +943,19 @@ func (gui *MainGUI) updateDeviceList() {
 		return
 	}
 
-	log.Printf("Обновление списка устройств. Всего: %d", len(gui.connectedDevices))
+	devices := gui.state.GetAllDevices() // получаем безопасную копию
+	log.Printf("Обновление списка устройств. Всего: %d", len(devices))
 
 	gui.devicesContainer.Objects = nil
 
-	if len(gui.connectedDevices) == 0 {
+	if len(devices) == 0 {
 		noDevicesLabel := widget.NewLabel("Нет подключенных устройств")
 		noDevicesLabel.Alignment = fyne.TextAlignCenter
 		noDevicesLabel.TextStyle.Italic = true
 		gui.devicesContainer.Add(noDevicesLabel)
 	} else {
 		connectedCount := 0
-		for portID, device := range gui.connectedDevices {
+		for portID, device := range devices {
 			if device.IsConnected {
 				connectedCount++
 				deviceCard := gui.createDeviceCard(portID, device)
@@ -1011,42 +1030,42 @@ func (gui *MainGUI) clearDeviceDisplay() {
 
 // updateAvailableBlocks обновляет доступные блоки программирования
 func (gui *MainGUI) updateAvailableBlocks() {
-	// Сбрасываем все блоки
-	for blockType := BlockTypeStart; blockType <= BlockTypeStop; blockType++ {
-		gui.availableBlocks[blockType] = false
-	}
+	available := make(map[BlockType]bool)
 
 	// Всегда доступны базовые блоки
-	gui.availableBlocks[BlockTypeStart] = true
-	gui.availableBlocks[BlockTypeWait] = true
-	gui.availableBlocks[BlockTypeLoopStart] = true
-	gui.availableBlocks[BlockTypeLoopEnd] = true
-	gui.availableBlocks[BlockTypeStop] = true
-	gui.availableBlocks[BlockTypeCondition] = true
+	available[BlockTypeStart] = true
+	available[BlockTypeWait] = true
+	available[BlockTypeLoopStart] = true
+	available[BlockTypeLoopEnd] = true
+	available[BlockTypeStop] = true
+	available[BlockTypeCondition] = true
 
 	// Активируем блоки в зависимости от подключенных устройств
-	for _, device := range gui.connectedDevices {
+	devices := gui.state.GetAllDevices()
+	for _, device := range devices {
 		if !device.IsConnected {
 			continue
 		}
 
 		switch device.DeviceType {
 		case DEVICE_TYPE_MOTOR:
-			gui.availableBlocks[BlockTypeMotor] = true
+			available[BlockTypeMotor] = true
 		case DEVICE_TYPE_RGB_LIGHT:
-			gui.availableBlocks[BlockTypeLED] = true
+			available[BlockTypeLED] = true
 		case DEVICE_TYPE_TILT_SENSOR:
-			gui.availableBlocks[BlockTypeTiltSensor] = true
+			available[BlockTypeTiltSensor] = true
 		case DEVICE_TYPE_MOTION_SENSOR:
-			gui.availableBlocks[BlockTypeDistanceSensor] = true
+			available[BlockTypeDistanceSensor] = true
 		case DEVICE_TYPE_PIEZO_TONE:
-			gui.availableBlocks[BlockTypeSound] = true
+			available[BlockTypeSound] = true
 		case DEVICE_TYPE_VOLTAGE:
-			gui.availableBlocks[BlockTypeVoltageSensor] = true
+			available[BlockTypeVoltageSensor] = true
 		case DEVICE_TYPE_CURRENT:
-			gui.availableBlocks[BlockTypeCurrentSensor] = true
+			available[BlockTypeCurrentSensor] = true
 		}
 	}
+
+	gui.state.SetAvailableBlocks(available)
 }
 
 // ForceUpdateUI принудительно обновляет весь интерфейс
@@ -1069,8 +1088,8 @@ func (gui *MainGUI) ForceUpdateUI() {
 			gui.updateAvailableBlocks()
 		} else {
 			gui.clearDeviceDisplay()
-			gui.connectedDevices = make(map[byte]*Device)
-			gui.availableBlocks = make(map[BlockType]bool)
+			gui.state.ClearDevices()
+			gui.state.SetAvailableBlocks(make(map[BlockType]bool))
 		}
 
 		gui.updateToolbarState()

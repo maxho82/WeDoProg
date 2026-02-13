@@ -54,8 +54,8 @@ func (d *DraggableBlock) Tapped(e *fyne.PointEvent) {
 
 	log.Printf("Клик по блоку: %s (ID: %d)", d.block.Title, d.block.ID)
 
-	// Устанавливаем выбранный блок в GUI
-	d.gui.selectedBlock = d.block
+	// Устанавливаем выбранный блок в GUI через метод (было прямое присваивание)
+	d.gui.SetSelectedBlock(d.block)
 	d.programPanel.SetSelectedBlock(d.block)
 
 	// Показываем свойства блока

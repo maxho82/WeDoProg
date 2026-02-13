@@ -11,15 +11,15 @@ import (
 
 // ProgramPanel панель визуального программирования (дракон-схемы)
 type ProgramPanel struct {
-	gui           *MainGUI
-	scroll        *container.Scroll
-	content       *fyne.Container
-	programMgr    *ProgramManager
-	layout        *ProgramLayout
-	connections   []*ConnectionLine
-	blockWidgets  map[int]*DraggableBlock
-	selectedBlock *ProgramBlock
-	scale         float32
+	gui          *MainGUI
+	scroll       *container.Scroll
+	content      *fyne.Container
+	programMgr   *ProgramManager
+	layout       *ProgramLayout
+	connections  []*ConnectionLine
+	blockWidgets map[int]*DraggableBlock // карта виджетов блоков
+	// selectedBlock *ProgramBlock          // УДАЛЕНО – теперь хранится в gui.state
+	scale float32
 
 	// Новые поля для управления валентными точками
 	valenceManager  *ValenceManager
@@ -187,7 +187,8 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 		return 0
 	}
 
-	if p.selectedBlock == nil {
+	selected := p.gui.GetSelectedBlock() // было p.selectedBlock
+	if selected == nil {
 		for i, block := range p.programMgr.program.Blocks {
 			if block.Type == BlockTypeStop {
 				return i
@@ -197,10 +198,10 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 	}
 
 	// Используем switch вместо цепочки if-else
-	switch p.selectedBlock.Type {
+	switch selected.Type {
 	case BlockTypeLoopStart:
 		for i, block := range p.programMgr.program.Blocks {
-			if block.ID == p.selectedBlock.ID {
+			if block.ID == selected.ID {
 				loopEndID, found := p.programMgr.FindLoopEndID(block.ID)
 				if found {
 					for j, b := range p.programMgr.program.Blocks {
@@ -215,21 +216,21 @@ func (p *ProgramPanel) calculateInsertIndex() int {
 
 	case BlockTypeLoopEnd:
 		for i, block := range p.programMgr.program.Blocks {
-			if block.ID == p.selectedBlock.ID {
+			if block.ID == selected.ID {
 				return i + 1
 			}
 		}
 
 	case BlockTypeStop:
 		for i, block := range p.programMgr.program.Blocks {
-			if block.ID == p.selectedBlock.ID {
+			if block.ID == selected.ID {
 				return i
 			}
 		}
 
 	default:
 		for i, block := range p.programMgr.program.Blocks {
-			if block.ID == p.selectedBlock.ID {
+			if block.ID == selected.ID {
 				return i + 1
 			}
 		}
@@ -396,9 +397,9 @@ func (p *ProgramPanel) RemoveBlock(blockID int) {
 	// Обновляем все связи
 	p.updateAllConnections()
 
-	if p.selectedBlock != nil && p.selectedBlock.ID == blockID {
-		p.selectedBlock = nil
-		p.gui.selectedBlock = nil
+	// Если удаляемый блок был выбран, сбрасываем выделение
+	if selected := p.gui.GetSelectedBlock(); selected != nil && selected.ID == blockID {
+		p.gui.SetSelectedBlock(nil)
 		p.ResetHighlight()
 	}
 
@@ -448,9 +449,9 @@ func (p *ProgramPanel) RemoveBlockInternal(blockID int) {
 
 	p.removeConnectionsForBlock(blockID)
 
-	if p.selectedBlock != nil && p.selectedBlock.ID == blockID {
-		p.selectedBlock = nil
-		p.gui.selectedBlock = nil
+	// Если удаляемый блок был выбран, сбрасываем выделение
+	if selected := p.gui.GetSelectedBlock(); selected != nil && selected.ID == blockID {
+		p.gui.SetSelectedBlock(nil)
 		p.ResetHighlight()
 	}
 
@@ -480,7 +481,7 @@ func (p *ProgramPanel) Clear() {
 	p.content.Objects = nil
 	p.connections = make([]*ConnectionLine, 0)
 	p.blockWidgets = make(map[int]*DraggableBlock)
-	p.selectedBlock = nil
+	// p.selectedBlock = nil // удалено
 
 	// Очищаем валентные точки
 	p.valenceManager.ClearPoints()
@@ -533,19 +534,8 @@ func (p *ProgramPanel) GetBlockWidget(blockID int) *DraggableBlock {
 
 // SetSelectedBlock устанавливает выбранный блок
 func (p *ProgramPanel) SetSelectedBlock(block *ProgramBlock) {
-	for _, widget := range p.blockWidgets {
-		widget.SetSelected(false)
-	}
-
-	p.selectedBlock = block
-	if block != nil {
-		if widget, exists := p.blockWidgets[block.ID]; exists {
-			widget.SetSelected(true)
-		}
-		p.HighlightConnections(block)
-	} else {
-		p.ResetHighlight()
-	}
+	p.gui.SetSelectedBlock(block)
+	p.updateBlockStyle()
 }
 
 // updateConnections обновляет позиции всех соединений
@@ -725,4 +715,22 @@ func (p *ProgramPanel) RefreshAllConnections() {
 // IsInsertMode возвращает состояние режима вставки
 func (p *ProgramPanel) IsInsertMode() bool {
 	return p.isInsertMode
+}
+
+// onBlockTapped обработчик клика по блоку
+func (p *ProgramPanel) onBlockTapped(block *ProgramBlock) {
+	log.Printf("Выбран блок: %s (ID: %d)", block.Title, block.ID)
+	p.updateBlockStyle()
+	p.gui.SetSelectedBlock(block)
+	p.gui.showBlockProperties(block)
+	p.updateBlockStyle()
+}
+
+// updateBlockStyle обновляет стиль блоков в зависимости от выбранного
+func (p *ProgramPanel) updateBlockStyle() {
+	selected := p.gui.GetSelectedBlock()
+
+	for id, widget := range p.blockWidgets {
+		widget.SetSelected(selected != nil && id == selected.ID)
+	}
 }
