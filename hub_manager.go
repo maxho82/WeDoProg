@@ -12,7 +12,6 @@ import (
 )
 
 // HubManager управляет подключением к WeDo 2.0 хабу.
-// Больше не хранит устройства, только уведомляет через callback.
 type HubManager struct {
 	adapter                   *tinybluetooth.Adapter
 	device                    tinybluetooth.Device
@@ -25,14 +24,13 @@ type HubManager struct {
 	characteristics           map[string]tinybluetooth.DeviceCharacteristic
 	subscribedCharacteristics map[string]bool
 
-	// Callback'и
 	batteryUpdateCallback   func(batteryLevel int)
 	hubInfoUpdateCallback   func(info *HubInfo)
-	deviceUpdateCallback    func(portID byte, device *Device) // единственный канал для устройств
+	deviceUpdateCallback    func(portID byte, device *Device)
 	connectionStateCallback func(isConnected bool)
 }
 
-// NewHubManager создаёт новый менеджер хаба
+// NewHubManager создаёт новый менеджер хаба.
 func NewHubManager() (*HubManager, error) {
 	adapter := tinybluetooth.DefaultAdapter
 	if adapter == nil {
@@ -52,7 +50,7 @@ func NewHubManager() (*HubManager, error) {
 
 // --- Сканирование и подключение ---
 
-// ScanForHubs сканирует WeDo 2.0 хабы
+// ScanForHubs сканирует WeDo 2.0 хабы.
 func (hm *HubManager) ScanForHubs(timeout time.Duration) ([]HubInfo, error) {
 	var foundHubs []HubInfo
 	var scanMutex sync.Mutex
@@ -101,7 +99,7 @@ func (hm *HubManager) ScanForHubs(timeout time.Duration) ([]HubInfo, error) {
 	return foundHubs, nil
 }
 
-// Connect подключается к хабу
+// Connect подключается к хабу.
 func (hm *HubManager) Connect(address string) error {
 	hm.connectionMutex.Lock()
 	defer hm.connectionMutex.Unlock()
@@ -162,7 +160,7 @@ func (hm *HubManager) Connect(address string) error {
 	return nil
 }
 
-// discoverAllServices обнаруживает все службы и характеристики
+// discoverAllServices обнаруживает все службы и характеристики.
 func (hm *HubManager) discoverAllServices() error {
 	services, err := hm.device.DiscoverServices(nil)
 	if err != nil {
@@ -191,7 +189,7 @@ func (hm *HubManager) discoverAllServices() error {
 	return nil
 }
 
-// readAllDeviceInfo читает всю информацию об устройстве
+// readAllDeviceInfo читает всю информацию об устройстве.
 func (hm *HubManager) readAllDeviceInfo() {
 	log.Println("Чтение полной информации об устройстве...")
 
@@ -239,7 +237,7 @@ func (hm *HubManager) readAllDeviceInfo() {
 	hm.readBatteryLevel()
 }
 
-// readCharacteristic читает данные из характеристики
+// readCharacteristic читает данные из характеристики.
 func (hm *HubManager) readCharacteristic(char tinybluetooth.DeviceCharacteristic) ([]byte, error) {
 	buf := make([]byte, 512)
 	n, err := char.Read(buf)
@@ -249,7 +247,7 @@ func (hm *HubManager) readCharacteristic(char tinybluetooth.DeviceCharacteristic
 	return buf[:n], nil
 }
 
-// updateHubInfo обновляет информацию о хабе
+// updateHubInfo обновляет информацию о хабе.
 func (hm *HubManager) updateHubInfo(uuid string, value string) {
 	hm.connectionMutex.Lock()
 	defer hm.connectionMutex.Unlock()
@@ -270,7 +268,7 @@ func (hm *HubManager) updateHubInfo(uuid string, value string) {
 	}
 }
 
-// readBatteryLevel читает уровень батареи
+// readBatteryLevel читает уровень батареи.
 func (hm *HubManager) readBatteryLevel() {
 	batteryUUID := "00002a19-0000-1000-8000-00805f9b34fb"
 
@@ -292,13 +290,13 @@ func (hm *HubManager) readBatteryLevel() {
 	}
 }
 
-// subscribeToImportantNotifications подписывается на важные уведомления
+// subscribeToImportantNotifications подписывается на важные уведомления.
 func (hm *HubManager) subscribeToImportantNotifications() {
 	hm.subscribeToBatteryNotifications()
 	hm.subscribeToPortNotifications()
 }
 
-// subscribeToBatteryNotifications подписывается на уведомления батареи
+// subscribeToBatteryNotifications подписывается на уведомления батареи.
 func (hm *HubManager) subscribeToBatteryNotifications() {
 	batteryUUID := "00002a19-0000-1000-8000-00805f9b34fb"
 
@@ -323,7 +321,7 @@ func (hm *HubManager) subscribeToBatteryNotifications() {
 	}
 }
 
-// subscribeToPortNotifications подписывается на уведомления о портах
+// subscribeToPortNotifications подписывается на уведомления о портах.
 func (hm *HubManager) subscribeToPortNotifications() {
 	portInfoUUID := PORT_INFO_UUID
 
@@ -343,7 +341,7 @@ func (hm *HubManager) subscribeToPortNotifications() {
 	}
 }
 
-// handlePortNotification обрабатывает уведомления о портах
+// handlePortNotification обрабатывает уведомления о портах.
 func (hm *HubManager) handlePortNotification(data []byte) {
 	if len(data) < 2 {
 		log.Printf("Сообщение слишком короткое: %x", data)
@@ -424,27 +422,35 @@ func (hm *HubManager) notifyDeviceDisconnected(portID byte) {
 	}
 }
 
-// configureDevice настраивает устройство
+// configureDevice настраивает устройство, используя LPF2Protocol.
 func (hm *HubManager) configureDevice(portID byte, deviceType byte) error {
 	log.Printf("Настройка устройства на порту %d (тип: 0x%02x)", portID, deviceType)
 
 	var cmd []byte
+	var mode byte
 
 	switch deviceType {
 	case DEVICE_TYPE_MOTOR:
-		cmd = []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x00 // для мотора режим обычно 0
+		cmd = LPF2Protocol{}.EncodeDeviceSetupCommand(portID, 0x01, mode)
 	case DEVICE_TYPE_TILT_SENSOR:
-		cmd = []byte{0x01, 0x02, portID, 0x22, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x01 // режим определения наклона по умолчанию
+		cmd = LPF2Protocol{}.EncodeTiltSensorModeCommand(portID, mode)
 	case DEVICE_TYPE_MOTION_SENSOR:
-		cmd = []byte{0x01, 0x02, portID, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x00 // режим расстояния
+		cmd = LPF2Protocol{}.EncodeDistanceSensorModeCommand(portID, mode)
 	case DEVICE_TYPE_RGB_LIGHT:
-		cmd = []byte{0x01, 0x02, portID, 0x17, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x01 // RGB режим
+		cmd = LPF2Protocol{}.EncodeLEDModeCommand(portID, mode)
 	case DEVICE_TYPE_PIEZO_TONE:
-		cmd = []byte{0x01, 0x02, portID, 0x16, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x00
+		cmd = LPF2Protocol{}.EncodeDeviceSetupCommand(portID, 0x16, mode)
 	case DEVICE_TYPE_VOLTAGE:
-		cmd = []byte{0x01, 0x02, portID, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x00
+		cmd = LPF2Protocol{}.EncodeVoltageSensorModeCommand(portID)
 	case DEVICE_TYPE_CURRENT:
-		cmd = []byte{0x01, 0x02, portID, 0x15, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		mode = 0x00
+		cmd = LPF2Protocol{}.EncodeCurrentSensorModeCommand(portID)
 	default:
 		log.Printf("Неизвестный тип устройства 0x%02x, пропускаем настройку", deviceType)
 		return nil
@@ -458,7 +464,7 @@ func (hm *HubManager) configureDevice(portID byte, deviceType byte) error {
 	return nil
 }
 
-// getDeviceName возвращает имя устройства по типу
+// getDeviceName возвращает имя устройства по типу.
 func (hm *HubManager) getDeviceName(deviceType byte) string {
 	switch deviceType {
 	case 0x01:
@@ -480,7 +486,7 @@ func (hm *HubManager) getDeviceName(deviceType byte) string {
 	}
 }
 
-// mapDeviceType преобразует WeDo 2.0 тип устройства в наш формат
+// mapDeviceType преобразует WeDo 2.0 тип устройства в наш формат.
 func (hm *HubManager) mapDeviceType(deviceType byte) byte {
 	switch deviceType {
 	case 0x01:
@@ -502,7 +508,7 @@ func (hm *HubManager) mapDeviceType(deviceType byte) byte {
 	}
 }
 
-// WriteCharacteristic записывает данные в характеристику
+// WriteCharacteristic записывает данные в характеристику.
 func (hm *HubManager) WriteCharacteristic(uuid string, data []byte) error {
 	hm.connectionMutex.RLock()
 	defer hm.connectionMutex.RUnlock()
@@ -526,7 +532,7 @@ func (hm *HubManager) WriteCharacteristic(uuid string, data []byte) error {
 	return nil
 }
 
-// ReadCharacteristic читает данные из характеристики
+// ReadCharacteristic читает данные из характеристики.
 func (hm *HubManager) ReadCharacteristic(uuid string) ([]byte, error) {
 	hm.connectionMutex.RLock()
 	defer hm.connectionMutex.RUnlock()
@@ -549,7 +555,7 @@ func (hm *HubManager) ReadCharacteristic(uuid string) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// Disconnect отключается от хаба
+// Disconnect отключается от хаба.
 func (hm *HubManager) Disconnect() {
 	hm.connectionMutex.Lock()
 	defer hm.connectionMutex.Unlock()
@@ -568,14 +574,14 @@ func (hm *HubManager) Disconnect() {
 	}
 }
 
-// IsConnected возвращает статус подключения
+// IsConnected возвращает статус подключения.
 func (hm *HubManager) IsConnected() bool {
 	hm.connectionMutex.RLock()
 	defer hm.connectionMutex.RUnlock()
 	return hm.isConnected
 }
 
-// GetHubInfo возвращает информацию о хабе
+// GetHubInfo возвращает информацию о хабе.
 func (hm *HubManager) GetHubInfo() *HubInfo {
 	hm.connectionMutex.RLock()
 	defer hm.connectionMutex.RUnlock()
@@ -583,7 +589,7 @@ func (hm *HubManager) GetHubInfo() *HubInfo {
 	return &infoCopy
 }
 
-// Callback функции
+// Callback функции.
 func (hm *HubManager) SetBatteryUpdateCallback(callback func(batteryLevel int)) {
 	hm.batteryUpdateCallback = callback
 }
@@ -600,7 +606,7 @@ func (hm *HubManager) SetConnectionStateCallback(callback func(isConnected bool)
 	hm.connectionStateCallback = callback
 }
 
-// autoDetectDevicesV2 - улучшенная функция обнаружения устройств
+// autoDetectDevicesV2 - улучшенная функция обнаружения устройств.
 func (hm *HubManager) autoDetectDevicesV2() {
 	log.Println("=== Автоматическое обнаружение устройств ===")
 
@@ -623,7 +629,7 @@ func (hm *HubManager) autoDetectDevicesV2() {
 	log.Println("=== Обнаружение устройств завершено ===")
 }
 
-// manualDeviceDetection ручное обнаружение устройства на порту
+// manualDeviceDetection ручное обнаружение устройства на порту.
 func (hm *HubManager) manualDeviceDetection(portID byte) {
 	log.Printf("Ручное обнаружение на порту %d", portID)
 
@@ -637,9 +643,9 @@ func (hm *HubManager) manualDeviceDetection(portID byte) {
 		deviceType byte
 		setupCmd   []byte
 	}{
-		{"Мотор", DEVICE_TYPE_MOTOR, []byte{0x01, 0x02, portID, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}},
-		{"Датчик наклона", DEVICE_TYPE_TILT_SENSOR, []byte{0x01, 0x02, portID, 0x22, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}},
-		{"Датчик расстояния", DEVICE_TYPE_MOTION_SENSOR, []byte{0x01, 0x02, portID, 0x23, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}},
+		{"Мотор", DEVICE_TYPE_MOTOR, LPF2Protocol{}.EncodeDeviceSetupCommand(portID, 0x01, 0x00)},
+		{"Датчик наклона", DEVICE_TYPE_TILT_SENSOR, LPF2Protocol{}.EncodeTiltSensorModeCommand(portID, 0x01)},
+		{"Датчик расстояния", DEVICE_TYPE_MOTION_SENSOR, LPF2Protocol{}.EncodeDistanceSensorModeCommand(portID, 0x00)},
 	}
 
 	for _, dev := range deviceTypes {
@@ -665,7 +671,6 @@ func (hm *HubManager) manualDeviceDetection(portID byte) {
 			_ = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, stopCmd)
 		}
 
-		// Уведомляем о подключении
 		hm.notifyDeviceConnected(portID, dev.deviceType, nil)
 		log.Printf("Порт %d: обнаружен %s", portID, dev.name)
 		return
@@ -674,21 +679,21 @@ func (hm *HubManager) manualDeviceDetection(portID byte) {
 	log.Printf("Порт %d: устройства не обнаружены", portID)
 }
 
-// detectBuiltInLED проверяет встроенный RGB светодиод
+// detectBuiltInLED проверяет встроенный RGB светодиод.
 func (hm *HubManager) detectBuiltInLED() {
 	log.Println("Обнаружение встроенного RGB светодиода на порту 6...")
 
-	setupCmd := []byte{0x01, 0x02, 6, 0x17, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+	setupCmd := LPF2Protocol{}.EncodeLEDModeCommand(6, 0x01) // RGB режим
 	err := hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
 	if err != nil {
 		log.Printf("Порт 6: ошибка настройки RGB режима - %v", err)
-		setupCmd = []byte{0x01, 0x02, 6, 0x17, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01}
+		setupCmd = LPF2Protocol{}.EncodeLEDModeCommand(6, 0x00) // пробуем индексный режим
 		_ = hm.WriteCharacteristic(INPUT_COMMAND_UUID, setupCmd)
 	}
 
 	time.Sleep(1 * time.Second)
 
-	colorCmd := []byte{0x06, 0x04, 0x03, 0x00, 0xFF, 0x00}
+	colorCmd := LPF2Protocol{}.EncodeLEDCommand(6, 0x00, 0xFF, 0x00) // зелёный
 	err = hm.WriteCharacteristic(OUTPUT_COMMAND_UUID, colorCmd)
 	if err != nil {
 		log.Printf("Порт 6: ошибка установки цвета - %v", err)
@@ -699,12 +704,12 @@ func (hm *HubManager) detectBuiltInLED() {
 	log.Println("Порт 6: RGB светодиод обнаружен (зеленый)")
 }
 
-// isExternalPort проверяет, является ли порт внешним
+// isExternalPort проверяет, является ли порт внешним.
 func isExternalPort(portID byte) bool {
 	return portID == 1 || portID == 2 || portID == 6
 }
 
-// bytesToHexString преобразует байты в hex строку
+// bytesToHexString преобразует байты в hex строку.
 func bytesToHexString(data []byte) string {
 	if len(data) == 0 {
 		return ""

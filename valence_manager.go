@@ -57,7 +57,7 @@ func (vm *ValenceManager) ShowValencePoints(blockType BlockType) {
 	vm.selectedType = blockType
 	vm.ClearPoints()
 
-	// Получаем программу через state (исправлено: было programMgr.program)
+	// Получаем программу через state
 	program := vm.programPanel.programMgr.state.GetProgram()
 
 	if len(program.Blocks) == 0 {
@@ -296,40 +296,6 @@ func (vm *ValenceManager) ShowTempConnection(point *ValencePoint) {
 	vm.refreshDisplay()
 }
 
-// createTempBlockForPreview создает временный блок для предварительного просмотра
-func (vm *ValenceManager) createTempBlockForPreview() *ProgramBlock {
-	// Создаем блок с нулевыми координатами
-	block := &ProgramBlock{
-		ID:         -1, // Временный ID
-		Type:       vm.selectedType,
-		Title:      "Новый блок",
-		Parameters: make(map[string]interface{}),
-		Width:      DefaultBlockWidth,
-		Height:     DefaultBlockHeight,
-	}
-
-	// Настраиваем блок
-	switch vm.selectedType {
-	case BlockTypeStart:
-		block.Title = "Начать"
-	case BlockTypeMotor:
-		block.Title = "Мотор"
-	case BlockTypeLED:
-		block.Title = "Светодиод"
-	case BlockTypeWait:
-		block.Title = "Ждать"
-	case BlockTypeLoopStart:
-		block.Title = "ДЛЯ"
-	case BlockTypeLoopEnd:
-		block.Title = "КЦ"
-	case BlockTypeStop:
-		block.Title = "Стоп"
-		// ... остальные типы
-	}
-
-	return block
-}
-
 // createTempLinesForPoint создает временные линии для точки
 func (vm *ValenceManager) createTempLinesForPoint(point *ValencePoint) {
 	scale := vm.programPanel.GetScale()
@@ -487,52 +453,37 @@ func (vm *ValenceManager) GetContainer() fyne.CanvasObject {
 	return vm.container
 }
 
-// InsertBlockAtPoint вставляет блок в указанной валентной точке
+// InsertBlockAtPoint вставляет блок (или пару) в указанной валентной точке.
 func (vm *ValenceManager) InsertBlockAtPoint(point *ValencePoint) bool {
 	if point == nil {
 		return false
 	}
 
-	log.Printf("Вставка блока типа %v в точку %d", vm.selectedType, point.ID)
+	log.Printf("Вставка блока типа %v в точку %d", vm.programPanel.insertBlockType, point.ID)
 
-	// Создаем новый блок
-	newBlock := vm.programPanel.programMgr.CreateBlock(vm.selectedType, 0, 0)
-
-	// Определяем позицию вставки
-	var insertIndex int
-	// Получаем программу через state для определения индекса
-	program := vm.programPanel.programMgr.state.GetProgram()
-
+	// Определяем afterBlockID на основе типа точки
+	var afterBlockID int
 	switch point.InsertType {
 	case ValenceInsertStart:
-		// В начало программы
-		insertIndex = 0
-
-	case ValenceInsertBetween:
-		// Между двумя блоками
-		for i, block := range program.Blocks {
-			if block.ID == point.FromBlock.ID {
-				insertIndex = i + 1
-				break
-			}
+		afterBlockID = 0
+	case ValenceInsertBetween, ValenceInsertLoop:
+		if point.FromBlock != nil {
+			afterBlockID = point.FromBlock.ID
+		} else {
+			afterBlockID = -1 // fallback
 		}
-
 	case ValenceInsertEnd:
-		// В конец программы
-		insertIndex = len(program.Blocks)
-
-	case ValenceInsertLoop:
-		// Внутри цикла
-		for i, block := range program.Blocks {
-			if block.ID == point.FromBlock.ID {
-				insertIndex = i + 1
-				break
-			}
-		}
+		afterBlockID = -1
 	}
 
-	// Добавляем блок через programPanel
-	vm.programPanel.AddBlockAtPosition(newBlock, insertIndex)
+	// Если есть пара для вставки, передаём её в панель вместе с afterBlockID
+	if vm.programPanel.insertPairFirst != nil && vm.programPanel.insertPairSecond != nil {
+		vm.programPanel.AddBlockAtPosition(vm.programPanel.insertPairFirst, afterBlockID)
+	} else {
+		// Обычный одиночный блок
+		newBlock := vm.programPanel.programMgr.CreateBlock(vm.programPanel.insertBlockType, 0, 0)
+		vm.programPanel.AddBlockAtPosition(newBlock, afterBlockID)
+	}
 
 	return true
 }

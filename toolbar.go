@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"fyne.io/fyne/v2"
@@ -24,7 +23,7 @@ type Toolbar struct {
 	clearButton  *widget.Button
 }
 
-// NewToolbar создаёт новую панель инструментов
+// NewToolbar создаёт новую панель инструментов.
 func NewToolbar(gui *MainGUI) *Toolbar {
 	toolbar := &Toolbar{
 		gui: gui,
@@ -33,14 +32,13 @@ func NewToolbar(gui *MainGUI) *Toolbar {
 	return toolbar
 }
 
-// GetContainer возвращает контейнер панели инструментов
+// GetContainer возвращает контейнер панели инструментов.
 func (t *Toolbar) GetContainer() fyne.CanvasObject {
 	return t.container
 }
 
-// UpdateState обновляет состояние кнопок панели инструментов
+// UpdateState обновляет состояние кнопок панели инструментов.
 func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool) {
-	// Проверяем, не в режиме ли вставки блоков
 	isInInsertMode := false
 	if t.gui != nil && t.gui.programPanel != nil {
 		isInInsertMode = t.gui.programPanel.IsInsertMode()
@@ -48,7 +46,6 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 
 	if t.runButton != nil && t.stopButton != nil {
 		if isInInsertMode {
-			// В режиме вставки кнопки запуска/остановки отключены
 			t.runButton.Disable()
 			t.stopButton.Disable()
 		} else if isConnected && hasProgram && !isRunning {
@@ -57,13 +54,9 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 		} else if isRunning {
 			t.runButton.Disable()
 			t.stopButton.Enable()
-			// Устанавливаем зелёный цвет для кнопки запуска (успех)
-			t.runButton.Importance = widget.SuccessImportance
 		} else {
 			t.runButton.Disable()
 			t.stopButton.Disable()
-			// Возвращаем обычный цвет
-			t.runButton.Importance = widget.HighImportance
 		}
 	}
 
@@ -77,7 +70,6 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 		}
 	}
 
-	// Кнопка очистки доступна только не в режиме вставки и когда есть программа
 	if t.clearButton != nil {
 		if isInInsertMode || !hasProgram {
 			t.clearButton.Disable()
@@ -87,9 +79,8 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 	}
 }
 
-// buildUI строит интерфейс панели инструментов
+// buildUI строит интерфейс панели инструментов.
 func (t *Toolbar) buildUI() *fyne.Container {
-	// Кнопка подключения хаба
 	connectButton := widget.NewButtonWithIcon("Поиск хаба", theme.SearchIcon(), func() {
 		if t.gui != nil {
 			t.gui.showHubDiscoveryDialog()
@@ -97,7 +88,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	})
 	connectButton.Importance = widget.HighImportance
 
-	// Кнопка отключения
 	disconnectButton := widget.NewButtonWithIcon("Отключиться", theme.CancelIcon(), func() {
 		if t.gui != nil && t.gui.hubMgr != nil {
 			t.gui.hubMgr.Disconnect()
@@ -106,44 +96,15 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	disconnectButton.Importance = widget.MediumImportance
 	disconnectButton.Disable()
 
-	// Кнопки управления программой
 	t.runButton = widget.NewButtonWithIcon("Запуск", theme.MediaPlayIcon(), func() {
 		if t.gui != nil && t.gui.programMgr != nil {
 			log.Println("Запуск программы...")
-
-			// Проверяем, есть ли блок "Начать"
-			hasStartBlock := false
-			for _, block := range t.gui.programMgr.state.GetProgram().Blocks {
-				if block.Type == BlockTypeStart {
-					hasStartBlock = true
-					break
-				}
-			}
-			if !hasStartBlock {
-				dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Начать'"), t.gui.window)
-				return
-			}
-
-			// Проверяем, есть ли блок "Стоп"
-			hasStopBlock := false
-			for _, block := range t.gui.programMgr.state.GetProgram().Blocks {
-				if block.Type == BlockTypeStop {
-					hasStopBlock = true
-					break
-				}
-			}
-			if !hasStopBlock {
-				dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Стоп'"), t.gui.window)
-				return
-			}
-
 			err := t.gui.programMgr.RunProgram()
 			if err != nil {
 				log.Printf("Ошибка запуска программы: %v", err)
 				dialog.ShowError(err, t.gui.window)
 			} else {
 				log.Println("Программа успешно запущена")
-				// Обновляем состояние кнопок
 				t.UpdateState(true, true, true)
 			}
 		}
@@ -160,7 +121,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	t.stopButton.Importance = widget.MediumImportance
 	t.stopButton.Disable()
 
-	// Кнопки работы с файлами
 	t.saveButton = widget.NewButtonWithIcon("Сохранить", theme.DocumentSaveIcon(), func() {
 		t.saveProgram()
 	})
@@ -178,7 +138,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	t.exportButton.Importance = widget.MediumImportance
 	t.exportButton.Disable()
 
-	// Кнопка очистки
 	t.clearButton = widget.NewButtonWithIcon("Очистить", theme.DeleteIcon(), func() {
 		if t.gui.programMgr != nil {
 			dialog.ShowConfirm("Очистить программу",
@@ -194,13 +153,11 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	})
 	t.clearButton.Importance = widget.MediumImportance
 
-	// Кнопка помощи
 	helpButton := widget.NewButtonWithIcon("Справка", theme.HelpIcon(), func() {
 		t.showHelp()
 	})
 	helpButton.Importance = widget.LowImportance
 
-	// Статус подключения
 	if t.gui != nil {
 		t.gui.statusLabel = widget.NewLabel("Не подключено")
 		t.gui.statusLabel.Alignment = fyne.TextAlignCenter
@@ -210,7 +167,6 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		t.gui.disconnectButton = disconnectButton
 	}
 
-	// Контейнер панели инструментов
 	toolbarContainer := container.NewHBox(
 		connectButton,
 		disconnectButton,
@@ -228,14 +184,12 @@ func (t *Toolbar) buildUI() *fyne.Container {
 		layout.NewSpacer(),
 	)
 
-	// Добавляем статус в отдельный контейнер
 	statusContainer := container.NewHBox(
 		layout.NewSpacer(),
 		t.gui.statusLabel,
 		layout.NewSpacer(),
 	)
 
-	// Основной контейнер с панелью инструментов и статусом
 	mainContainer := container.NewVBox(
 		toolbarContainer,
 		statusContainer,
@@ -244,25 +198,22 @@ func (t *Toolbar) buildUI() *fyne.Container {
 	return mainContainer
 }
 
-// saveProgram сохраняет программу
+// saveProgram сохраняет программу.
 func (t *Toolbar) saveProgram() {
-	// TODO: Реализовать сохранение программы в файл
 	dialog.ShowInformation("Информация", "Функция сохранения программы в разработке", t.gui.window)
 }
 
-// loadProgram загружает программу
+// loadProgram загружает программу.
 func (t *Toolbar) loadProgram() {
-	// TODO: Реализовать загрузку программы из файла
 	dialog.ShowInformation("Информация", "Функция загрузки программы в разработке", t.gui.window)
 }
 
-// exportProgram экспортирует программу
+// exportProgram экспортирует программу.
 func (t *Toolbar) exportProgram() {
-	// TODO: Реализовать экспорт программы в разные форматы
 	dialog.ShowInformation("Информация", "Функция экспорта программы в разработке", t.gui.window)
 }
 
-// showHelp показывает справку
+// showHelp показывает справку.
 func (t *Toolbar) showHelp() {
 	helpText := `WeDoProg - Визуальный программист WeDo 2.0
 

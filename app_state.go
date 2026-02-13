@@ -4,15 +4,15 @@ import "sync"
 
 // AppState хранит всё разделяемое состояние приложения, доступ к которому
 // может осуществляться из нескольких горутин (например, callback'и Bluetooth).
-// Теперь также содержит программу и состояние её выполнения.
+// Содержит программу и состояние её выполнения.
 type AppState struct {
 	mu               sync.RWMutex
 	connectedHub     *HubInfo
 	connectedDevices map[byte]*Device
 	availableBlocks  map[BlockType]bool
 	selectedBlock    *ProgramBlock
-	program          *Program          // добавлено: текущая программа
-	programState     ProgramState      // добавлено: состояние выполнения
+	program          *Program     // текущая программа
+	programState     ProgramState // состояние выполнения
 }
 
 // NewAppState создаёт новый экземпляр состояния с инициализированными картами.
@@ -25,7 +25,7 @@ func NewAppState() *AppState {
 	}
 }
 
-// --- connectedHub --- (без изменений)
+// --- connectedHub ---
 func (s *AppState) GetConnectedHub() *HubInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -51,7 +51,7 @@ func (s *AppState) UpdateHubBattery(level int) {
 	}
 }
 
-// --- connectedDevices --- (без изменений)
+// --- connectedDevices ---
 func (s *AppState) GetDevice(port byte) *Device {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -92,7 +92,7 @@ func (s *AppState) ClearDevices() {
 	s.connectedDevices = make(map[byte]*Device)
 }
 
-// --- availableBlocks --- (без изменений)
+// --- availableBlocks ---
 func (s *AppState) GetAvailableBlocks() map[BlockType]bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -118,7 +118,7 @@ func (s *AppState) SetAvailableBlock(bt BlockType, available bool) {
 	s.availableBlocks[bt] = available
 }
 
-// --- selectedBlock --- (без изменений)
+// --- selectedBlock ---
 func (s *AppState) GetSelectedBlock() *ProgramBlock {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -131,15 +131,14 @@ func (s *AppState) SetSelectedBlock(block *ProgramBlock) {
 	s.selectedBlock = block
 }
 
-// ========== Новые методы для работы с программой ==========
+// ========== Методы для работы с программой ==========
 
-// GetProgram возвращает копию текущей программы.
+// GetProgram возвращает текущую программу.
+// Внимание: возвращаемый объект нельзя модифицировать напрямую.
+// Для изменений используйте методы ProgramManager или SetProgram.
 func (s *AppState) GetProgram() *Program {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Возвращаем ссылку на программу, т.к. она сама по себе не thread-safe,
-	// но предполагается, что все изменения будут проходить через AppState.
-	// Для внешнего чтения можно сделать копию, но пока оставим так.
 	return s.program
 }
 

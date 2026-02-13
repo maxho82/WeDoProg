@@ -46,7 +46,7 @@ type MainGUI struct {
 	scaleLabel   *widget.Label
 }
 
-// NewMainGUI создает новый GUI
+// NewMainGUI создает новый GUI.
 func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	state := NewAppState()
 	deviceMgr := NewDeviceManager(hubMgr)
@@ -80,7 +80,7 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	return gui
 }
 
-// onDeviceUpdateFromHub передаёт обновление от HubManager в DeviceManager и AppState
+// onDeviceUpdateFromHub передаёт обновление от HubManager в DeviceManager и AppState.
 func (gui *MainGUI) onDeviceUpdateFromHub(portID byte, device *Device) {
 	gui.deviceMgr.AddOrUpdateDevice(device)
 	gui.state.UpdateDevice(portID, device)
@@ -90,17 +90,17 @@ func (gui *MainGUI) onDeviceUpdateFromHub(portID byte, device *Device) {
 	})
 }
 
-// GetSelectedBlock возвращает текущий выбранный блок
+// GetSelectedBlock возвращает текущий выбранный блок.
 func (gui *MainGUI) GetSelectedBlock() *ProgramBlock {
 	return gui.state.GetSelectedBlock()
 }
 
-// SetSelectedBlock устанавливает текущий выбранный блок
+// SetSelectedBlock устанавливает текущий выбранный блок.
 func (gui *MainGUI) SetSelectedBlock(block *ProgramBlock) {
 	gui.state.SetSelectedBlock(block)
 }
 
-// highlightExecutingBlock выделяет выполняемый блок
+// highlightExecutingBlock выделяет выполняемый блок.
 func (gui *MainGUI) highlightExecutingBlock(blockID int) {
 	if blockID == -1 {
 		gui.programPanel.HighlightExecutingBlock(-1)
@@ -115,9 +115,9 @@ func (gui *MainGUI) highlightExecutingBlock(blockID int) {
 	}
 }
 
-// BuildUI строит интерфейс приложения
+// BuildUI строит интерфейс приложения.
 func (gui *MainGUI) BuildUI() fyne.CanvasObject {
-	toolbar := gui.createToolbar()
+	gui.createToolbar()
 	gui.devicePanel = gui.createDevicePanel()
 	gui.propertiesPanel = gui.createPropertiesPanel()
 	gui.blocksPanel = gui.createBlocksPanel()
@@ -138,7 +138,7 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	rightSplit.SetOffset(0.75)
 
 	mainContainer := container.NewBorder(
-		container.NewVBox(toolbar, gui.zoomControls),
+		container.NewVBox(gui.toolbar.GetContainer(), gui.zoomControls),
 		nil,
 		nil,
 		nil,
@@ -146,12 +146,13 @@ func (gui *MainGUI) BuildUI() fyne.CanvasObject {
 	)
 
 	gui.setupKeyboardShortcuts()
-	gui.addInitialBlocks()
+	// При первом запуске создаём новую программу автоматически
+	gui.createNewProgram()
 
 	return mainContainer
 }
 
-// createBlocksPanel создает панель блоков программирования
+// createBlocksPanel создает панель блоков программирования.
 func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	blocksContainer := container.NewVBox()
 
@@ -164,11 +165,18 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 
 	gui.blockButtons = make(map[BlockType]*widget.Button)
 
+	// Кнопка "Новая+" – создаёт новую программу с блоками "Начать" и "Стоп"
+	newButton := widget.NewButtonWithIcon("Новая+", theme.DocumentCreateIcon(), func() {
+		gui.confirmNewProgram()
+	})
+	newButton.Importance = widget.HighImportance
+	blocksContainer.Add(newButton)
+	blocksContainer.Add(widget.NewSeparator())
+
 	categories := []struct {
 		name   string
 		blocks []BlockType
 	}{
-		{"Управление", []BlockType{BlockTypeStart, BlockTypeStop}},
 		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoopStart, BlockTypeCondition}},
 		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound}},
 		{"Датчики", []BlockType{BlockTypeTiltSensor, BlockTypeDistanceSensor, BlockTypeVoltageSensor, BlockTypeCurrentSensor}},
@@ -184,6 +192,7 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 			blockName := gui.getBlockName(blockType)
 
 			if blockType == BlockTypeLoopStart {
+				// Для цикла создаём специальную кнопку, которая вставляет сразу пару блоков
 				blockButton := widget.NewButton(blockName, func() {
 					gui.handleLoopBlockSelection()
 				})
@@ -198,9 +207,7 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 				}(blockType))
 
 				blockButton.Importance = widget.LowImportance
-				if blockType != BlockTypeStart && blockType != BlockTypeStop {
-					gui.blockButtons[blockType] = blockButton
-				}
+				gui.blockButtons[blockType] = blockButton
 				blocksContainer.Add(blockButton)
 			}
 		}
@@ -220,7 +227,38 @@ func (gui *MainGUI) createBlocksPanel() *container.Scroll {
 	return scroll
 }
 
-// handleBlockSelection обрабатывает выбор блока для вставки
+// confirmNewProgram показывает диалог подтверждения создания новой программы.
+func (gui *MainGUI) confirmNewProgram() {
+	dialog.ShowConfirm("Создать новую программу",
+		"Вы уверены? Текущая программа будет удалена.",
+		func(confirmed bool) {
+			if confirmed {
+				gui.createNewProgram()
+			}
+		}, gui.window)
+}
+
+// createNewProgram очищает программу и добавляет блоки "Начать" и "Стоп".
+func (gui *MainGUI) createNewProgram() {
+	gui.programMgr.ClearProgram()
+
+	// Создаём и вставляем блок "Начать" (в начало)
+	startBlock := gui.programMgr.CreateBlock(BlockTypeStart, 0, 0)
+	gui.programMgr.InsertBlock(startBlock, 0)
+
+	// Создаём и вставляем блок "Стоп" (в конец)
+	stopBlock := gui.programMgr.CreateBlock(BlockTypeStop, 0, 0)
+	gui.programMgr.InsertBlock(stopBlock, -1)
+
+	// Обновляем отображение
+	gui.programPanel.ReloadFromProgram()
+	gui.updateToolbarState()
+	gui.updateBlockButtonsState()
+
+	log.Println("Создана новая программа с блоками 'Начать' и 'Стоп'")
+}
+
+// handleBlockSelection обрабатывает выбор обычного блока для вставки.
 func (gui *MainGUI) handleBlockSelection(blockType BlockType) {
 	log.Printf("Выбран блок для вставки: %v", blockType)
 	gui.programPanel.SetInsertMode(blockType)
@@ -230,13 +268,56 @@ func (gui *MainGUI) handleBlockSelection(blockType BlockType) {
 	gui.updateBlockButtonsState()
 }
 
-// handleLoopBlockSelection обрабатывает выбор блока цикла
+// handleLoopBlockSelection обрабатывает выбор блока цикла – создаёт сразу два блока с уникальными ID.
 func (gui *MainGUI) handleLoopBlockSelection() {
-	log.Println("Создание цикла (начало и конец)...")
-	gui.createLoopBlocks()
+	log.Println("Создание пары блоков цикла...")
+
+	// Получаем текущий максимальный ID из программы
+	prog := gui.programMgr.state.GetProgram()
+	maxID := 0
+	for _, b := range prog.Blocks {
+		if b.ID > maxID {
+			maxID = b.ID
+		}
+	}
+
+	// Создаём два блока с явными уникальными ID
+	loopStart := &ProgramBlock{
+		ID:         maxID + 1,
+		Type:       BlockTypeLoopStart,
+		Width:      DefaultBlockWidth,
+		Height:     DefaultBlockHeight,
+		Parameters: make(map[string]interface{}),
+		Color:      getBlockColor(BlockTypeLoopStart),
+	}
+	loopEnd := &ProgramBlock{
+		ID:         maxID + 2,
+		Type:       BlockTypeLoopEnd,
+		Width:      DefaultBlockWidth,
+		Height:     DefaultBlockHeight,
+		Parameters: make(map[string]interface{}),
+		Color:      getBlockColor(BlockTypeLoopEnd),
+	}
+
+	// Настраиваем блоки (заполняем Title, Description, OnExecute и т.д.)
+	gui.programMgr.configureBlock(loopStart)
+	gui.programMgr.configureBlock(loopEnd)
+
+	// Связываем их параметрами
+	loopStart.Parameters["loopEndID"] = loopEnd.ID
+	loopEnd.Parameters["loopStartID"] = loopStart.ID
+
+	// Передаём пару в панель для последующей вставки через валентные точки
+	gui.programPanel.SetInsertLoopPair(loopStart, loopEnd)
+
+	// Включаем режим вставки
+	if gui.insertCancelButton != nil {
+		gui.insertCancelButton.Show()
+	}
+	gui.updateBlockButtonsState()
 }
 
-// CancelInsertMode отменяет режим вставки
+// CancelInsertMode отменяет режим вставки.
 func (gui *MainGUI) CancelInsertMode() {
 	log.Println("Отмена режима вставки")
 	if gui.programPanel != nil {
@@ -249,7 +330,7 @@ func (gui *MainGUI) CancelInsertMode() {
 	gui.updateToolbarState()
 }
 
-// setupKeyboardShortcuts настраивает горячие клавиши
+// setupKeyboardShortcuts настраивает горячие клавиши.
 func (gui *MainGUI) setupKeyboardShortcuts() {
 	gui.window.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
 		switch event.Name {
@@ -298,7 +379,7 @@ func (gui *MainGUI) setupKeyboardShortcuts() {
 	})
 }
 
-// updateBlockButtonsState обновляет состояние кнопок блоков
+// updateBlockButtonsState обновляет состояние кнопок блоков.
 func (gui *MainGUI) updateBlockButtonsState() {
 	isInsertMode := gui.programPanel != nil && gui.programPanel.IsInsertMode()
 
@@ -309,38 +390,9 @@ func (gui *MainGUI) updateBlockButtonsState() {
 			button.Enable()
 		}
 	}
-
-	if !isInsertMode {
-		prog := gui.state.GetProgram()
-		hasStartBlock := false
-		hasStopBlock := false
-
-		for _, block := range prog.Blocks {
-			if block.Type == BlockTypeStart {
-				hasStartBlock = true
-			}
-			if block.Type == BlockTypeStop {
-				hasStopBlock = true
-			}
-		}
-
-		if !hasStartBlock {
-			for blockType, button := range gui.blockButtons {
-				if blockType != BlockTypeStart {
-					button.Disable()
-				}
-			}
-		}
-
-		if hasStartBlock && !hasStopBlock {
-			stopBlock := gui.programMgr.CreateBlock(BlockTypeStop, 0, 0)
-			gui.programPanel.AddBlock(stopBlock)
-			log.Println("Автоматически создан блок 'Стоп'")
-		}
-	}
 }
 
-// createZoomControls создает элементы управления масштабированием
+// createZoomControls создает элементы управления масштабированием.
 func (gui *MainGUI) createZoomControls() {
 	zoomOutButton := widget.NewButtonWithIcon("", theme.ZoomOutIcon(), func() {
 		if gui.programPanel != nil {
@@ -380,7 +432,7 @@ func (gui *MainGUI) createZoomControls() {
 	)
 }
 
-// updateScaleLabel обновляет метку масштаба
+// updateScaleLabel обновляет метку масштаба.
 func (gui *MainGUI) updateScaleLabel() {
 	if gui.programPanel != nil && gui.scaleLabel != nil {
 		scale := gui.programPanel.GetScale()
@@ -389,7 +441,7 @@ func (gui *MainGUI) updateScaleLabel() {
 	}
 }
 
-// deleteSelectedBlock удаляет выбранный блок
+// deleteSelectedBlock удаляет выбранный блок.
 func (gui *MainGUI) deleteSelectedBlock() {
 	selected := gui.GetSelectedBlock()
 	if selected == nil {
@@ -418,7 +470,7 @@ func (gui *MainGUI) deleteSelectedBlock() {
 		}, gui.window)
 }
 
-// deleteLoopWithConfirmation удаляет весь цикл с подтверждением
+// deleteLoopWithConfirmation удаляет весь цикл с подтверждением.
 func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
 	var loopStartID, loopEndID int
 	var loopStartBlock, loopEndBlock *ProgramBlock
@@ -470,7 +522,7 @@ func (gui *MainGUI) deleteLoopWithConfirmation(blockID int) {
 		}, gui.window)
 }
 
-// clearPropertiesPanel очищает панель свойств
+// clearPropertiesPanel очищает панель свойств.
 func (gui *MainGUI) clearPropertiesPanel() {
 	if gui.propertiesPanel != nil {
 		container, ok := gui.propertiesPanel.Content.(*fyne.Container)
@@ -483,16 +535,12 @@ func (gui *MainGUI) clearPropertiesPanel() {
 	}
 }
 
-// createToolbar создает панель инструментов
-func (gui *MainGUI) createToolbar() *fyne.Container {
+// createToolbar создает панель инструментов.
+func (gui *MainGUI) createToolbar() {
 	gui.toolbar = NewToolbar(gui)
-	if container, ok := gui.toolbar.GetContainer().(*fyne.Container); ok {
-		return container
-	}
-	return container.NewWithoutLayout()
 }
 
-// createPropertiesPanel создает панель свойств
+// createPropertiesPanel создает панель свойств.
 func (gui *MainGUI) createPropertiesPanel() *container.Scroll {
 	content := container.NewVBox(
 		widget.NewLabelWithStyle("Свойства", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
@@ -502,29 +550,7 @@ func (gui *MainGUI) createPropertiesPanel() *container.Scroll {
 	return container.NewVScroll(content)
 }
 
-// createLoopBlocks создает два блока для цикла (начало и конец)
-func (gui *MainGUI) createLoopBlocks() {
-	log.Println("Создание цикла (начало и конец)...")
-
-	loopStartBlock := gui.programMgr.CreateBlock(BlockTypeLoopStart, 0, 0)
-	gui.programPanel.AddBlock(loopStartBlock)
-	gui.programPanel.SetSelectedBlock(loopStartBlock)
-
-	loopEndBlock := gui.programMgr.CreateBlock(BlockTypeLoopEnd, 0, 0)
-	loopStartBlock.Parameters["loopEndID"] = loopEndBlock.ID
-	loopEndBlock.Parameters["loopStartID"] = loopStartBlock.ID
-
-	gui.programPanel.AddBlock(loopEndBlock)
-	gui.programPanel.SetSelectedBlock(loopStartBlock)
-	gui.SetSelectedBlock(loopStartBlock)
-
-	gui.updateBlockButtonsState()
-	gui.updateToolbarState()
-
-	log.Printf("Создан цикл: начало (ID: %d) -> конец (ID: %d)", loopStartBlock.ID, loopEndBlock.ID)
-}
-
-// getBlockName возвращает имя блока по типу
+// getBlockName возвращает имя блока по типу.
 func (gui *MainGUI) getBlockName(blockType BlockType) string {
 	switch blockType {
 	case BlockTypeStart:
@@ -558,7 +584,7 @@ func (gui *MainGUI) getBlockName(blockType BlockType) string {
 	}
 }
 
-// showBlockProperties показывает свойства выбранного блока
+// showBlockProperties показывает свойства выбранного блока.
 func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
 	gui.SetSelectedBlock(block)
 
@@ -579,7 +605,7 @@ func (gui *MainGUI) showBlockProperties(block *ProgramBlock) {
 	}
 }
 
-// showHubDiscoveryDialog показывает диалог поиска хаба
+// showHubDiscoveryDialog показывает диалог поиска хаба.
 func (gui *MainGUI) showHubDiscoveryDialog() {
 	progress := dialog.NewProgressInfinite("Поиск WeDo 2.0 хаба", "Сканирование...", gui.window)
 	progress.Show()
@@ -628,7 +654,7 @@ func (gui *MainGUI) showHubDiscoveryDialog() {
 	}()
 }
 
-// connectToHub подключается к указанному хабу
+// connectToHub подключается к указанному хабу.
 func (gui *MainGUI) connectToHub(address string) {
 	progress := dialog.NewProgressInfinite("Подключение", "Подключение к хабу...", gui.window)
 	progress.Show()
@@ -657,7 +683,6 @@ func (gui *MainGUI) connectToHub(address string) {
 					fyne.Do(func() {
 						gui.updateDeviceList()
 						gui.updateAvailableBlocks()
-						gui.ForceUpdateUI()
 					})
 				}()
 			}
@@ -665,7 +690,7 @@ func (gui *MainGUI) connectToHub(address string) {
 	}()
 }
 
-// updateConnectionStatus обновляет статус подключения
+// updateConnectionStatus обновляет статус подключения.
 func (gui *MainGUI) updateConnectionStatus(isConnected bool) {
 	fyne.Do(func() {
 		if isConnected {
@@ -688,7 +713,7 @@ func (gui *MainGUI) updateConnectionStatus(isConnected bool) {
 	})
 }
 
-// UpdateBatteryDisplay обновляет отображение батареи
+// UpdateBatteryDisplay обновляет отображение батареи.
 func (gui *MainGUI) UpdateBatteryDisplay(batteryLevel int) {
 	gui.state.UpdateHubBattery(batteryLevel)
 	fyne.Do(func() {
@@ -699,7 +724,7 @@ func (gui *MainGUI) UpdateBatteryDisplay(batteryLevel int) {
 	})
 }
 
-// UpdateHubInfoDisplay обновляет отображение информации о хабе
+// UpdateHubInfoDisplay обновляет отображение информации о хабе.
 func (gui *MainGUI) UpdateHubInfoDisplay(info *HubInfo) {
 	gui.state.SetConnectedHub(info)
 	fyne.Do(func() {
@@ -707,20 +732,7 @@ func (gui *MainGUI) UpdateHubInfoDisplay(info *HubInfo) {
 	})
 }
 
-// UpdateDeviceDisplay обновляет отображение устройств
-func (gui *MainGUI) UpdateDeviceDisplay(portID byte, device *Device) {
-	log.Printf("UpdateDeviceDisplay: порт %d, устройство: %s, подключено: %v",
-		portID, device.Name, device.IsConnected)
-
-	gui.state.UpdateDevice(portID, device)
-
-	fyne.Do(func() {
-		gui.updateAvailableBlocks()
-		gui.updateDeviceList()
-	})
-}
-
-// createDevicePanel создает панель устройств
+// createDevicePanel создает панель устройств.
 func (gui *MainGUI) createDevicePanel() *fyne.Container {
 	mainContainer := container.NewVBox()
 
@@ -751,11 +763,11 @@ func (gui *MainGUI) createDevicePanel() *fyne.Container {
 	gui.deviceList = gui.createDeviceList()
 	mainContainer.Add(gui.deviceList)
 
-	syncButton := widget.NewButton("Синхронизировать устройства", func() {
-		log.Println("Ручная синхронизация устройств...")
+	detectButton := widget.NewButton("Обнаружить устройства", func() {
+		log.Println("Ручное обнаружение устройств...")
 		go func() {
 			if gui.deviceMgr != nil {
-				gui.deviceMgr.SyncDevices()
+				gui.deviceMgr.ForceDetectAllDevices()
 			}
 			time.Sleep(500 * time.Millisecond)
 			fyne.Do(func() {
@@ -764,13 +776,13 @@ func (gui *MainGUI) createDevicePanel() *fyne.Container {
 			})
 		}()
 	})
-	syncButton.Importance = widget.MediumImportance
-	mainContainer.Add(syncButton)
+	detectButton.Importance = widget.MediumImportance
+	mainContainer.Add(detectButton)
 
 	return mainContainer
 }
 
-// createDeviceList создает список устройств
+// createDeviceList создает список устройств.
 func (gui *MainGUI) createDeviceList() *widget.List {
 	list := widget.NewList(
 		func() int {
@@ -803,6 +815,7 @@ func (gui *MainGUI) createDeviceList() *widget.List {
 					connected = append(connected, pair{port, dev})
 				}
 			}
+			// Сортировка по порту
 			for i := 0; i < len(connected)-1; i++ {
 				for j := i + 1; j < len(connected); j++ {
 					if connected[i].port > connected[j].port {
@@ -849,14 +862,14 @@ func (gui *MainGUI) createDeviceList() *widget.List {
 	return list
 }
 
-// updateDeviceList обновляет список устройств
+// updateDeviceList обновляет список устройств.
 func (gui *MainGUI) updateDeviceList() {
 	if gui.deviceList != nil {
 		gui.deviceList.Refresh()
 	}
 }
 
-// createBatteryWidget создает виджет батареи
+// createBatteryWidget создает виджет батареи.
 func (gui *MainGUI) createBatteryWidget() *fyne.Container {
 	title := canvas.NewText("Батарея", color.NRGBA{R: 240, G: 240, B: 240, A: 255})
 	title.TextSize = 14
@@ -879,7 +892,7 @@ func (gui *MainGUI) createBatteryWidget() *fyne.Container {
 	)
 }
 
-// updateHubInfoUI обновляет информацию о хабе в UI
+// updateHubInfoUI обновляет информацию о хабе в UI.
 func (gui *MainGUI) updateHubInfoUI(info *HubInfo) {
 	if gui.hubInfoContainer == nil {
 		return
@@ -911,38 +924,7 @@ func (gui *MainGUI) updateHubInfoUI(info *HubInfo) {
 	gui.hubInfoContainer.Refresh()
 }
 
-// createDeviceCard создает карточку устройства (не используется в новой версии, оставлено для совместимости)
-func (gui *MainGUI) createDeviceCard(portID byte, device *Device) *fyne.Container {
-	var iconRes fyne.Resource
-	switch device.DeviceType {
-	case DEVICE_TYPE_MOTOR:
-		iconRes = theme.StorageIcon()
-	case DEVICE_TYPE_RGB_LIGHT:
-		iconRes = theme.VisibilityIcon()
-	case DEVICE_TYPE_TILT_SENSOR:
-		iconRes = theme.ViewRefreshIcon()
-	case DEVICE_TYPE_MOTION_SENSOR:
-		iconRes = theme.MoveDownIcon()
-	case DEVICE_TYPE_PIEZO_TONE:
-		iconRes = theme.MediaFastForwardIcon()
-	default:
-		iconRes = theme.ComputerIcon()
-	}
-
-	icon := widget.NewIcon(iconRes)
-	info := widget.NewLabel(fmt.Sprintf("Порт %d: %s", portID, device.Name))
-	info.TextStyle.Bold = true
-
-	status := widget.NewLabel("✓ Подключено")
-	status.TextStyle.Italic = true
-
-	return container.NewVBox(
-		container.NewHBox(icon, info, layout.NewSpacer(), status),
-		widget.NewSeparator(),
-	)
-}
-
-// clearDeviceDisplay очищает отображение устройств
+// clearDeviceDisplay очищает отображение устройств.
 func (gui *MainGUI) clearDeviceDisplay() {
 	if gui.hubInfoContainer != nil {
 		gui.hubInfoContainer.Objects = nil
@@ -957,15 +939,14 @@ func (gui *MainGUI) clearDeviceDisplay() {
 	}
 }
 
-// updateAvailableBlocks обновляет доступные блоки программирования
+// updateAvailableBlocks обновляет доступные блоки программирования.
 func (gui *MainGUI) updateAvailableBlocks() {
 	available := make(map[BlockType]bool)
 
-	available[BlockTypeStart] = true
+	// Базовые логические блоки всегда доступны
 	available[BlockTypeWait] = true
 	available[BlockTypeLoopStart] = true
 	available[BlockTypeLoopEnd] = true
-	available[BlockTypeStop] = true
 	available[BlockTypeCondition] = true
 
 	devices := gui.state.GetAllDevices()
@@ -994,32 +975,7 @@ func (gui *MainGUI) updateAvailableBlocks() {
 	gui.state.SetAvailableBlocks(available)
 }
 
-// ForceUpdateUI принудительно обновляет весь интерфейс
-func (gui *MainGUI) ForceUpdateUI() {
-	fyne.Do(func() {
-		isConnected := gui.hubMgr.IsConnected()
-		gui.updateConnectionStatus(isConnected)
-
-		if isConnected {
-			hubInfo := gui.hubMgr.GetHubInfo()
-			if hubInfo != nil {
-				gui.UpdateHubInfoDisplay(hubInfo)
-			}
-			if hubInfo != nil && hubInfo.Battery > 0 {
-				gui.UpdateBatteryDisplay(hubInfo.Battery)
-			}
-			gui.updateDeviceList()
-			gui.updateAvailableBlocks()
-		} else {
-			gui.clearDeviceDisplay()
-			gui.state.ClearDevices()
-			gui.state.SetAvailableBlocks(make(map[BlockType]bool))
-		}
-		gui.updateToolbarState()
-	})
-}
-
-// updateToolbarState обновляет состояние панели инструментов на основе текущего состояния
+// updateToolbarState обновляет состояние панели инструментов.
 func (gui *MainGUI) updateToolbarState() {
 	if gui.toolbar == nil {
 		return
@@ -1033,45 +989,13 @@ func (gui *MainGUI) updateToolbarState() {
 	gui.toolbar.UpdateState(isConnected, hasProgram, isRunning)
 }
 
-// addInitialBlocks добавляет начальные блоки "Начать" и "Стоп"
-func (gui *MainGUI) addInitialBlocks() {
-	prog := gui.state.GetProgram()
-	if len(prog.Blocks) == 0 {
-		startBlock := gui.programMgr.CreateBlock(BlockTypeStart, 0, 0)
-		gui.programPanel.AddBlock(startBlock)
-		log.Println("Добавлен начальный блок 'Начать'")
-		gui.updateBlockButtonsState()
-	}
-}
-
-// handleRunButton обрабатывает запуск программы
+// handleRunButton обрабатывает запуск программы.
 func (gui *MainGUI) handleRunButton() {
 	if gui.programMgr == nil {
 		return
 	}
 
 	log.Println("Запуск программы...")
-
-	prog := gui.state.GetProgram()
-	hasStartBlock := false
-	hasStopBlock := false
-	for _, block := range prog.Blocks {
-		if block.Type == BlockTypeStart {
-			hasStartBlock = true
-		}
-		if block.Type == BlockTypeStop {
-			hasStopBlock = true
-		}
-	}
-
-	if !hasStartBlock {
-		dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Начать'"), gui.window)
-		return
-	}
-	if !hasStopBlock {
-		dialog.ShowError(fmt.Errorf("Программа должна содержать блок 'Стоп'"), gui.window)
-		return
-	}
 
 	err := gui.programMgr.RunProgram()
 	if err != nil {
@@ -1083,7 +1007,7 @@ func (gui *MainGUI) handleRunButton() {
 	}
 }
 
-// handleStopButton обрабатывает остановку программы
+// handleStopButton обрабатывает остановку программы.
 func (gui *MainGUI) handleStopButton() {
 	if gui.programMgr != nil {
 		gui.programMgr.StopProgram()
@@ -1091,7 +1015,7 @@ func (gui *MainGUI) handleStopButton() {
 	}
 }
 
-// handleSpaceKey обрабатывает нажатие Space для запуска/остановки
+// handleSpaceKey обрабатывает нажатие Space для запуска/остановки.
 func (gui *MainGUI) handleSpaceKey() {
 	if gui.toolbar == nil || gui.programMgr == nil {
 		return

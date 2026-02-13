@@ -162,9 +162,6 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 			power := e.block.Parameters["power"].(int8)
 			duration := e.block.Parameters["duration"].(uint16)
 
-			// Сначала синхронизируем устройства
-			e.deviceMgr.SyncDevices()
-
 			// Тестируем
 			err := e.deviceMgr.SetMotorPower(port, power, duration)
 			if err != nil {
