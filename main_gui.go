@@ -42,7 +42,8 @@ type MainGUI struct {
 	// Динамические элементы
 	batteryProgress  *widget.ProgressBar
 	hubInfoContainer *fyne.Container
-	devicesContainer *fyne.Container
+	// devicesContainer *fyne.Container // УДАЛЕНО
+	deviceList *widget.List // ADDED - список устройств
 
 	// Данные (удалены поля, теперь они в state)
 	// connectedHub     *HubInfo
@@ -68,9 +69,7 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 		hubMgr:     hubMgr,
 		deviceMgr:  deviceMgr,
 		programMgr: programMgr,
-		state:      NewAppState(), // Инициализируем состояние
-		// connectedDevices: make(map[byte]*Device), // удалено
-		// availableBlocks:  make(map[BlockType]bool), // удалено
+		state:      NewAppState(),
 	}
 
 	hubMgr.SetBatteryUpdateCallback(gui.UpdateBatteryDisplay)
@@ -78,15 +77,12 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	hubMgr.SetDeviceUpdateCallback(gui.UpdateDeviceDisplay)
 	hubMgr.SetConnectionStateCallback(gui.updateConnectionStatus)
 
-	// Устанавливаем callback для отслеживания состояния программы
 	programMgr.SetStateChangeCallback(func(state ProgramState) {
-		// Обновляем UI в главном потоке
 		fyne.Do(func() {
 			gui.updateToolbarState()
 		})
 	})
 
-	// Устанавливаем callback для отслеживания текущего выполняемого блока
 	programMgr.SetCurrentBlockCallback(func(blockID int) {
 		fyne.Do(func() {
 			gui.highlightExecutingBlock(blockID)
@@ -96,12 +92,12 @@ func NewMainGUI(window fyne.Window, hubMgr *HubManager) *MainGUI {
 	return gui
 }
 
-// GetSelectedBlock возвращает текущий выбранный блок (безопасно)
+// GetSelectedBlock возвращает текущий выбранный блок
 func (gui *MainGUI) GetSelectedBlock() *ProgramBlock {
 	return gui.state.GetSelectedBlock()
 }
 
-// SetSelectedBlock устанавливает текущий выбранный блок (безопасно)
+// SetSelectedBlock устанавливает текущий выбранный блок
 func (gui *MainGUI) SetSelectedBlock(block *ProgramBlock) {
 	gui.state.SetSelectedBlock(block)
 }
@@ -859,8 +855,9 @@ func (gui *MainGUI) createDevicePanel() *fyne.Container {
 	devicesTitle.TextStyle.Bold = true
 	mainContainer.Add(container.NewCenter(devicesTitle))
 
-	gui.devicesContainer = container.NewVBox()
-	mainContainer.Add(gui.devicesContainer)
+	// ADDED: создаем список устройств
+	gui.deviceList = gui.createDeviceList()
+	mainContainer.Add(gui.deviceList)
 
 	// Кнопка синхронизации
 	syncButton := widget.NewButton("Синхронизировать устройства", func() {
@@ -880,6 +877,111 @@ func (gui *MainGUI) createDevicePanel() *fyne.Container {
 	mainContainer.Add(syncButton)
 
 	return mainContainer
+}
+
+// ADDED: создание widget.List для отображения устройств
+func (gui *MainGUI) createDeviceList() *widget.List {
+	list := widget.NewList(
+		// длина списка
+		func() int {
+			devices := gui.state.GetAllDevices()
+			count := 0
+			for _, dev := range devices {
+				if dev.IsConnected {
+					count++
+				}
+			}
+			return count
+		},
+		// создание шаблона элемента
+		func() fyne.CanvasObject {
+			// Создаем типовой элемент: иконка + информация + статус
+			icon := widget.NewIcon(theme.ComputerIcon()) // временно
+			info := widget.NewLabel("Порт X: Устройство")
+			info.TextStyle.Bold = true
+			status := widget.NewLabel("✓ Подключено")
+			status.TextStyle.Italic = true
+
+			return container.NewHBox(
+				icon,
+				info,
+				layout.NewSpacer(),
+				status,
+			)
+		},
+		// заполнение данными
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			// Получаем все устройства и фильтруем подключенные
+			devices := gui.state.GetAllDevices()
+			// Собираем список подключенных в порядке возрастания порта
+			type pair struct {
+				port byte
+				dev  *Device
+			}
+			connected := make([]pair, 0, len(devices))
+			for port, dev := range devices {
+				if dev.IsConnected {
+					connected = append(connected, pair{port, dev})
+				}
+			}
+			// Сортируем по порту (пузырьком для простоты, можно позже оптимизировать)
+			for i := 0; i < len(connected)-1; i++ {
+				for j := i + 1; j < len(connected); j++ {
+					if connected[i].port > connected[j].port {
+						connected[i], connected[j] = connected[j], connected[i]
+					}
+				}
+			}
+
+			if id < len(connected) {
+				port := connected[id].port
+				dev := connected[id].dev
+
+				containerObj := obj.(*fyne.Container)
+				// containerObj.Objects: [0]icon, [1]info, [2]spacer, [3]status
+				if len(containerObj.Objects) >= 4 {
+					// Устанавливаем иконку
+					var iconRes fyne.Resource
+					switch dev.DeviceType {
+					case DEVICE_TYPE_MOTOR:
+						iconRes = theme.StorageIcon()
+					case DEVICE_TYPE_RGB_LIGHT:
+						iconRes = theme.VisibilityIcon()
+					case DEVICE_TYPE_TILT_SENSOR:
+						iconRes = theme.ViewRefreshIcon()
+					case DEVICE_TYPE_MOTION_SENSOR:
+						iconRes = theme.MoveDownIcon()
+					case DEVICE_TYPE_PIEZO_TONE:
+						iconRes = theme.MediaFastForwardIcon()
+					default:
+						iconRes = theme.ComputerIcon()
+					}
+					iconWidget := containerObj.Objects[0].(*widget.Icon)
+					iconWidget.SetResource(iconRes)
+
+					// Устанавливаем текст информации
+					infoWidget := containerObj.Objects[1].(*widget.Label)
+					infoWidget.SetText(fmt.Sprintf("Порт %d: %s", port, dev.Name))
+
+					// Статус уже "✓ Подключено", можно не менять
+				}
+			}
+		},
+	)
+
+	list.OnSelected = func(id widget.ListItemID) {
+		// Можно добавить действие при выборе элемента списка, если нужно
+		list.Unselect(id)
+	}
+
+	return list
+}
+
+// updateDeviceList обновляет список устройств
+func (gui *MainGUI) updateDeviceList() {
+	if gui.deviceList != nil {
+		gui.deviceList.Refresh() // Просто обновляем список
+	}
 }
 
 // createBatteryWidget создает виджет батареи
@@ -937,43 +1039,6 @@ func (gui *MainGUI) updateHubInfoUI(info *HubInfo) {
 	gui.hubInfoContainer.Refresh()
 }
 
-// updateDeviceList обновляет список устройств
-func (gui *MainGUI) updateDeviceList() {
-	if gui.devicesContainer == nil {
-		return
-	}
-
-	devices := gui.state.GetAllDevices() // получаем безопасную копию
-	log.Printf("Обновление списка устройств. Всего: %d", len(devices))
-
-	gui.devicesContainer.Objects = nil
-
-	if len(devices) == 0 {
-		noDevicesLabel := widget.NewLabel("Нет подключенных устройств")
-		noDevicesLabel.Alignment = fyne.TextAlignCenter
-		noDevicesLabel.TextStyle.Italic = true
-		gui.devicesContainer.Add(noDevicesLabel)
-	} else {
-		connectedCount := 0
-		for portID, device := range devices {
-			if device.IsConnected {
-				connectedCount++
-				deviceCard := gui.createDeviceCard(portID, device)
-				gui.devicesContainer.Add(deviceCard)
-			}
-		}
-
-		if connectedCount == 0 {
-			noDevicesLabel := widget.NewLabel("Все устройства отключены")
-			noDevicesLabel.Alignment = fyne.TextAlignCenter
-			noDevicesLabel.TextStyle.Italic = true
-			gui.devicesContainer.Add(noDevicesLabel)
-		}
-	}
-
-	gui.devicesContainer.Refresh()
-}
-
 // createDeviceCard создает карточку устройства
 func (gui *MainGUI) createDeviceCard(portID byte, device *Device) *fyne.Container {
 	var iconRes fyne.Resource
@@ -1017,9 +1082,9 @@ func (gui *MainGUI) clearDeviceDisplay() {
 		gui.hubInfoContainer.Refresh()
 	}
 
-	if gui.devicesContainer != nil {
-		gui.devicesContainer.Objects = nil
-		gui.devicesContainer.Refresh()
+	// Список устройств сам обновится при следующем Refresh, но можно принудительно обновить
+	if gui.deviceList != nil {
+		gui.deviceList.Refresh()
 	}
 
 	if gui.batteryProgress != nil {
@@ -1084,7 +1149,7 @@ func (gui *MainGUI) ForceUpdateUI() {
 				gui.UpdateBatteryDisplay(hubInfo.Battery)
 			}
 
-			gui.updateDeviceList()
+			gui.updateDeviceList() // теперь обновляет список
 			gui.updateAvailableBlocks()
 		} else {
 			gui.clearDeviceDisplay()
