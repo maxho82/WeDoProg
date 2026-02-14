@@ -15,11 +15,13 @@ import (
 
 // BlockEditor редактор свойств блока
 type BlockEditor struct {
-	block     *ProgramBlock
-	deviceMgr *DeviceManager
-	container *fyne.Container
-	onChange  func(block *ProgramBlock)
-	window    fyne.Window
+	block          *ProgramBlock
+	deviceMgr      *DeviceManager
+	container      *fyne.Container
+	onChange       func(block *ProgramBlock)
+	window         fyne.Window
+	modeContainer  *fyne.Container // для блока светодиода (хранит текущий UI)
+	valueContainer *fyne.Container // для блока переменной (хранит поле ввода)
 }
 
 // NewBlockEditor создает редактор свойств блока
@@ -87,6 +89,295 @@ func (e *BlockEditor) buildUI() *fyne.Container {
 	return mainContainer
 }
 
+// ------------------ Блок "Светодиод" (с поддержкой двух режимов) ------------------
+
+func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
+	// Сначала создаём контейнер для переключения UI (пустой)
+	e.modeContainer = container.NewMax()
+
+	// Режим работы
+	modeLabel := widget.NewLabel("Режим:")
+	modeSelect := widget.NewSelect([]string{"RGB", "Индексный"}, func(selected string) {
+		mode := byte(0)
+		if selected == "Индексный" {
+			mode = 1
+		}
+		e.block.Parameters["mode"] = mode
+		e.updateLEDModeUI(mode)
+		e.notifyChange()
+	})
+
+	// Устанавливаем текущее значение (callback будет вызван)
+	currentMode, _ := e.block.Parameters["mode"].(byte)
+	if currentMode == 1 {
+		modeSelect.SetSelected("Индексный")
+	} else {
+		modeSelect.SetSelected("RGB")
+		e.block.Parameters["mode"] = byte(0)
+	}
+
+	// Заполняем контейнер в соответствии с текущим режимом
+	if currentMode == 1 {
+		e.modeContainer.Objects = []fyne.CanvasObject{e.buildLEDIndexUI()}
+	} else {
+		e.modeContainer.Objects = []fyne.CanvasObject{e.buildLEDRGBUI()}
+	}
+
+	cont.Add(modeLabel)
+	cont.Add(modeSelect)
+	cont.Add(e.modeContainer)
+}
+
+// buildLEDRGBUI создаёт UI для RGB-режима
+func (e *BlockEditor) buildLEDRGBUI() fyne.CanvasObject {
+	rgbCont := container.NewVBox()
+
+	// Порт (всегда 6)
+	portLabel := widget.NewLabel("Порт светодиода:")
+	portSelect := widget.NewSelect([]string{"Порт 6 (встроенный)"}, func(selected string) {
+		e.block.Parameters["port"] = byte(6)
+		e.notifyChange()
+	})
+	portSelect.SetSelected("Порт 6 (встроенный)")
+	e.block.Parameters["port"] = byte(6)
+
+	// Красный
+	redLabel := widget.NewLabel("Красный:")
+	redSlider := widget.NewSlider(0, 255)
+	redValueLabel := widget.NewLabel("")
+	if red, ok := e.block.Parameters["red"].(byte); ok {
+		redSlider.Value = float64(red)
+		redValueLabel.SetText(fmt.Sprintf("%d", red))
+	} else {
+		redSlider.Value = 255
+		e.block.Parameters["red"] = byte(255)
+		redValueLabel.SetText("255")
+	}
+	redSlider.OnChanged = func(value float64) {
+		e.block.Parameters["red"] = byte(value)
+		redValueLabel.SetText(fmt.Sprintf("%.0f", value))
+		e.notifyChange()
+	}
+	redContainer := container.NewBorder(nil, nil, nil, redValueLabel, redSlider)
+
+	// Зеленый
+	greenLabel := widget.NewLabel("Зеленый:")
+	greenSlider := widget.NewSlider(0, 255)
+	greenValueLabel := widget.NewLabel("")
+	if green, ok := e.block.Parameters["green"].(byte); ok {
+		greenSlider.Value = float64(green)
+		greenValueLabel.SetText(fmt.Sprintf("%d", green))
+	} else {
+		greenSlider.Value = 0
+		e.block.Parameters["green"] = byte(0)
+		greenValueLabel.SetText("0")
+	}
+	greenSlider.OnChanged = func(value float64) {
+		e.block.Parameters["green"] = byte(value)
+		greenValueLabel.SetText(fmt.Sprintf("%.0f", value))
+		e.notifyChange()
+	}
+	greenContainer := container.NewBorder(nil, nil, nil, greenValueLabel, greenSlider)
+
+	// Синий
+	blueLabel := widget.NewLabel("Синий:")
+	blueSlider := widget.NewSlider(0, 255)
+	blueValueLabel := widget.NewLabel("")
+	if blue, ok := e.block.Parameters["blue"].(byte); ok {
+		blueSlider.Value = float64(blue)
+		blueValueLabel.SetText(fmt.Sprintf("%d", blue))
+	} else {
+		blueSlider.Value = 0
+		e.block.Parameters["blue"] = byte(0)
+		blueValueLabel.SetText("0")
+	}
+	blueSlider.OnChanged = func(value float64) {
+		e.block.Parameters["blue"] = byte(value)
+		blueValueLabel.SetText(fmt.Sprintf("%.0f", value))
+		e.notifyChange()
+	}
+	blueContainer := container.NewBorder(nil, nil, nil, blueValueLabel, blueSlider)
+
+	// Быстрые цвета
+	quickColorsLabel := widget.NewLabel("Быстрые цвета:")
+	quickColorsContainer := container.NewGridWithColumns(3)
+	colors := []struct {
+		name    string
+		r, g, b byte
+	}{
+		{"Красный", 255, 0, 0},
+		{"Зеленый", 0, 255, 0},
+		{"Синий", 0, 0, 255},
+		{"Белый", 255, 255, 255},
+		{"Желтый", 255, 255, 0},
+		{"Фиолетовый", 255, 0, 255},
+		{"Выкл", 0, 0, 0},
+	}
+	for _, color := range colors {
+		btn := widget.NewButton(color.name, func(r, g, b byte) func() {
+			return func() {
+				e.block.Parameters["red"] = r
+				e.block.Parameters["green"] = g
+				e.block.Parameters["blue"] = b
+				redSlider.Value = float64(r)
+				greenSlider.Value = float64(g)
+				blueSlider.Value = float64(b)
+				redValueLabel.SetText(fmt.Sprintf("%d", r))
+				greenValueLabel.SetText(fmt.Sprintf("%d", g))
+				blueValueLabel.SetText(fmt.Sprintf("%d", b))
+				e.notifyChange()
+			}
+		}(color.r, color.g, color.b))
+		btn.Importance = widget.LowImportance
+		quickColorsContainer.Add(btn)
+	}
+
+	// Кнопка теста
+	testButton := widget.NewButton("Тест светодиод", func() {
+		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
+			port := e.block.Parameters["port"].(byte)
+			red := e.block.Parameters["red"].(byte)
+			green := e.block.Parameters["green"].(byte)
+			blue := e.block.Parameters["blue"].(byte)
+			err := e.deviceMgr.SetLEDColor(port, red, green, blue)
+			if err != nil {
+				log.Printf("Ошибка теста светодиода: %v", err)
+				dialog.ShowError(fmt.Errorf("Ошибка теста светодиода: %v", err), e.window)
+			} else {
+				dialog.ShowInformation("Тест светодиода",
+					fmt.Sprintf("Светодиод на порту %d установлен в RGB(%d,%d,%d)", port, red, green, blue),
+					e.window)
+			}
+		} else {
+			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
+		}
+	})
+	testButton.Importance = widget.HighImportance
+
+	rgbCont.Add(portLabel)
+	rgbCont.Add(portSelect)
+	rgbCont.Add(redLabel)
+	rgbCont.Add(redContainer)
+	rgbCont.Add(greenLabel)
+	rgbCont.Add(greenContainer)
+	rgbCont.Add(blueLabel)
+	rgbCont.Add(blueContainer)
+	rgbCont.Add(quickColorsLabel)
+	rgbCont.Add(quickColorsContainer)
+	rgbCont.Add(layout.NewSpacer())
+	rgbCont.Add(container.NewCenter(testButton))
+
+	return rgbCont
+}
+
+// buildLEDIndexUI создаёт UI для индексного режима
+func (e *BlockEditor) buildLEDIndexUI() fyne.CanvasObject {
+	idxCont := container.NewVBox()
+
+	portLabel := widget.NewLabel("Порт светодиода:")
+	portSelect := widget.NewSelect([]string{"Порт 6 (встроенный)"}, func(selected string) {
+		e.block.Parameters["port"] = byte(6)
+		e.notifyChange()
+	})
+	portSelect.SetSelected("Порт 6 (встроенный)")
+	e.block.Parameters["port"] = byte(6)
+
+	colorExprLabel := widget.NewLabel("Цвет (индекс или выражение):")
+	colorExprEntry := widget.NewEntry()
+	if expr, ok := e.block.Parameters["colorExpr"].(string); ok {
+		colorExprEntry.SetText(expr)
+	} else {
+		colorExprEntry.SetText("")
+		e.block.Parameters["colorExpr"] = ""
+	}
+	colorExprEntry.SetPlaceHolder("Например: красный, 5, myColor")
+	colorExprEntry.OnChanged = func(text string) {
+		e.block.Parameters["colorExpr"] = text
+		e.notifyChange()
+	}
+
+	// Кнопки быстрых цветов
+	quickColorsLabel := widget.NewLabel("Быстрые цвета:")
+	quickColorsContainer := container.NewGridWithColumns(3)
+
+	colors := []struct {
+		name  string
+		index byte
+	}{
+		{"Розовый", LED_INDEX_PINK},
+		{"Фиолетовый", LED_INDEX_PURPLE},
+		{"Синий", LED_INDEX_BLUE},
+		{"Зелёный", LED_INDEX_GREEN},
+		{"Красный", LED_INDEX_RED},
+		{"Белый", LED_INDEX_WHITE},
+		{"Выкл", 0},
+	}
+
+	for _, col := range colors {
+		btn := widget.NewButton(col.name, func(idx byte, name string) func() {
+			return func() {
+				colorExprEntry.SetText(name)
+				e.block.Parameters["colorExpr"] = name
+				e.notifyChange()
+			}
+		}(col.index, col.name))
+		btn.Importance = widget.LowImportance
+		quickColorsContainer.Add(btn)
+	}
+
+	// Кнопка теста
+	testButton := widget.NewButton("Тест светодиод", func() {
+		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
+			port := e.block.Parameters["port"].(byte)
+			expr := e.block.Parameters["colorExpr"].(string)
+			var colorIdx byte = 1
+			if expr != "" {
+				if num, err := strconv.Atoi(expr); err == nil {
+					colorIdx = byte(num)
+				} else if idx, ok := NameToIndexColor[strings.ToLower(expr)]; ok {
+					colorIdx = idx
+				}
+			}
+			err := e.deviceMgr.SetLEDIndexColor(port, colorIdx)
+			if err != nil {
+				log.Printf("Ошибка теста светодиода: %v", err)
+				dialog.ShowError(fmt.Errorf("Ошибка теста светодиода: %v", err), e.window)
+			} else {
+				dialog.ShowInformation("Тест светодиода",
+					fmt.Sprintf("Светодиод на порту %d установлен в индекс %d", port, colorIdx),
+					e.window)
+			}
+		} else {
+			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
+		}
+	})
+	testButton.Importance = widget.HighImportance
+
+	idxCont.Add(portLabel)
+	idxCont.Add(portSelect)
+	idxCont.Add(colorExprLabel)
+	idxCont.Add(colorExprEntry)
+	idxCont.Add(quickColorsLabel)
+	idxCont.Add(quickColorsContainer)
+	idxCont.Add(layout.NewSpacer())
+	idxCont.Add(container.NewCenter(testButton))
+
+	return idxCont
+}
+
+// updateLEDModeUI обновляет содержимое modeContainer при смене режима
+func (e *BlockEditor) updateLEDModeUI(mode byte) {
+	if mode == 1 {
+		e.modeContainer.Objects = []fyne.CanvasObject{e.buildLEDIndexUI()}
+	} else {
+		e.modeContainer.Objects = []fyne.CanvasObject{e.buildLEDRGBUI()}
+	}
+	e.modeContainer.Refresh()
+	// e.container.Refresh() удалён, так как e.container может быть nil на момент первого вызова
+}
+
+// ------------------ Блок "Переменная" (с адаптивным полем значения) ------------------
+
 func (e *BlockEditor) addVariableControls(cont *fyne.Container) {
 	// Имя переменной
 	nameLabel := widget.NewLabel("Имя переменной:")
@@ -102,22 +393,28 @@ func (e *BlockEditor) addVariableControls(cont *fyne.Container) {
 		e.notifyChange()
 	}
 
+	// Контейнер для поля ввода/выбора значения (создаём ДО typeSelect)
+	e.valueContainer = container.NewVBox()
+
 	// Тип переменной
 	typeLabel := widget.NewLabel("Тип:")
 	typeSelect := widget.NewSelect([]string{"bool", "int", "string", "color"}, func(selected string) {
 		e.block.Parameters["varType"] = selected
-		e.updateVariableValueUI(cont, selected)
+		if e.valueContainer != nil {
+			e.updateVariableValueUI(e.valueContainer, selected)
+		}
 		e.notifyChange()
+		// e.container.Refresh() удалён, так как e.container может быть nil
 	})
+
 	currentType, _ := e.block.Parameters["varType"].(string)
 	if currentType == "" {
 		currentType = "int"
 	}
+	// Устанавливаем выбранное значение после того, как valueContainer создан
 	typeSelect.SetSelected(currentType)
-
-	// Контейнер для поля ввода/выбора значения
-	valueContainer := container.NewVBox()
-	e.updateVariableValueUI(valueContainer, currentType)
+	// Заполняем valueContainer для текущего типа
+	e.updateVariableValueUI(e.valueContainer, currentType)
 
 	infoLabel := widget.NewLabel("Если выражение пусто, переменная получит значение по умолчанию для типа.")
 	infoLabel.Wrapping = fyne.TextWrapWord
@@ -126,10 +423,11 @@ func (e *BlockEditor) addVariableControls(cont *fyne.Container) {
 	cont.Add(nameEntry)
 	cont.Add(typeLabel)
 	cont.Add(typeSelect)
-	cont.Add(valueContainer)
+	cont.Add(e.valueContainer)
 	cont.Add(infoLabel)
 }
 
+// updateVariableValueUI обновляет содержимое valueContainer в зависимости от типа
 func (e *BlockEditor) updateVariableValueUI(cont *fyne.Container, varType string) {
 	cont.Objects = nil
 	switch varType {
@@ -142,7 +440,6 @@ func (e *BlockEditor) updateVariableValueUI(cont *fyne.Container, varType string
 			}
 			e.notifyChange()
 		})
-		// Устанавливаем текущее значение
 		if expr, ok := e.block.Parameters["expression"].(string); ok {
 			switch expr {
 			case "true":
@@ -151,6 +448,7 @@ func (e *BlockEditor) updateVariableValueUI(cont *fyne.Container, varType string
 				boolSelect.SetSelected("Нет")
 			default:
 				boolSelect.SetSelected("Нет")
+				e.block.Parameters["expression"] = "false"
 			}
 		} else {
 			boolSelect.SetSelected("Нет")
@@ -173,6 +471,8 @@ func (e *BlockEditor) updateVariableValueUI(cont *fyne.Container, varType string
 		cont.Add(exprEntry)
 	}
 }
+
+//--------------------------------------------------------------------------------------
 
 // addMotorControls добавляет элементы управления для мотора
 func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
@@ -279,324 +579,6 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	cont.Add(durationEntry)
 	cont.Add(layout.NewSpacer())
 	cont.Add(container.NewCenter(testButton))
-}
-
-func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
-	// Режим работы
-	modeLabel := widget.NewLabel("Режим:")
-	modeSelect := widget.NewSelect([]string{"RGB", "Индексный"}, func(selected string) {
-		mode := byte(0)
-		if selected == "Индексный" {
-			mode = 1
-		}
-		e.block.Parameters["mode"] = mode
-		e.updateLEDModeUI(cont, mode)
-		e.notifyChange()
-	})
-	currentMode, _ := e.block.Parameters["mode"].(byte)
-	if currentMode == 1 {
-		modeSelect.SetSelected("Индексный")
-	} else {
-		modeSelect.SetSelected("RGB")
-		e.block.Parameters["mode"] = byte(0)
-	}
-
-	// Контейнеры для разных режимов
-	rgbContainer := container.NewVBox()
-	indexContainer := container.NewVBox()
-
-	e.buildLEDRGBUI(rgbContainer)
-	e.buildLEDIndexUI(indexContainer)
-
-	modeContainer := container.NewMax()
-	if currentMode == 1 {
-		modeContainer.Objects = []fyne.CanvasObject{indexContainer}
-	} else {
-		modeContainer.Objects = []fyne.CanvasObject{rgbContainer}
-	}
-
-	cont.Add(modeLabel)
-	cont.Add(modeSelect)
-	cont.Add(modeContainer)
-}
-
-// buildLEDRGBUI добавляет элементы управления для светодиода RGB
-func (e *BlockEditor) buildLEDRGBUI(cont *fyne.Container) {
-	// Выбор порта
-	portLabel := widget.NewLabel("Порт светодиода:")
-	portSelect := widget.NewSelect([]string{"Порт 6 (встроенный)"}, func(selected string) {
-		e.block.Parameters["port"] = byte(6)
-		e.notifyChange()
-	})
-	portSelect.SetSelected("Порт 6 (встроенный)")
-	e.block.Parameters["port"] = byte(6)
-
-	// Цвет
-	colorLabelWidget := widget.NewLabel("Цвет (RGB):")
-
-	// Красный
-	redLabelWidget := widget.NewLabel("Красный:")
-	redSlider := widget.NewSlider(0, 255)
-	redValueLabel := widget.NewLabel("")
-
-	if red, ok := e.block.Parameters["red"].(byte); ok {
-		redSlider.Value = float64(red)
-		redValueLabel.SetText(fmt.Sprintf("%d", red))
-	} else {
-		redSlider.Value = 255
-		e.block.Parameters["red"] = byte(255)
-		redValueLabel.SetText("255")
-	}
-
-	redSlider.OnChanged = func(value float64) {
-		e.block.Parameters["red"] = byte(value)
-		redValueLabel.SetText(fmt.Sprintf("%.0f", value))
-		e.notifyChange()
-	}
-
-	// Контейнер для ползунка красного
-	redContainer := container.NewBorder(nil, nil, nil, redValueLabel, redSlider)
-
-	// Зеленый
-	greenLabelWidget := widget.NewLabel("Зеленый:")
-	greenSlider := widget.NewSlider(0, 255)
-	greenValueLabel := widget.NewLabel("")
-
-	if green, ok := e.block.Parameters["green"].(byte); ok {
-		greenSlider.Value = float64(green)
-		greenValueLabel.SetText(fmt.Sprintf("%d", green))
-	} else {
-		greenSlider.Value = 0
-		e.block.Parameters["green"] = byte(0)
-		greenValueLabel.SetText("0")
-	}
-
-	greenSlider.OnChanged = func(value float64) {
-		e.block.Parameters["green"] = byte(value)
-		greenValueLabel.SetText(fmt.Sprintf("%.0f", value))
-		e.notifyChange()
-	}
-
-	// Контейнер для ползунка зеленого
-	greenContainer := container.NewBorder(nil, nil, nil, greenValueLabel, greenSlider)
-
-	// Синий
-	blueLabelWidget := widget.NewLabel("Синий:")
-	blueSlider := widget.NewSlider(0, 255)
-	blueValueLabel := widget.NewLabel("")
-
-	if blue, ok := e.block.Parameters["blue"].(byte); ok {
-		blueSlider.Value = float64(blue)
-		blueValueLabel.SetText(fmt.Sprintf("%d", blue))
-	} else {
-		blueSlider.Value = 0
-		e.block.Parameters["blue"] = byte(0)
-		blueValueLabel.SetText("0")
-	}
-
-	blueSlider.OnChanged = func(value float64) {
-		e.block.Parameters["blue"] = byte(value)
-		blueValueLabel.SetText(fmt.Sprintf("%.0f", value))
-		e.notifyChange()
-	}
-
-	// Контейнер для ползунка синего
-	blueContainer := container.NewBorder(nil, nil, nil, blueValueLabel, blueSlider)
-
-	// Быстрые цвета
-	quickColorsLabelWidget := widget.NewLabel("Быстрые цвета:")
-	quickColorsContainer := container.NewGridWithColumns(3)
-
-	colors := []struct {
-		name    string
-		r, g, b byte
-	}{
-		{"Красный", 255, 0, 0},
-		{"Зеленый", 0, 255, 0},
-		{"Синий", 0, 0, 255},
-		{"Белый", 255, 255, 255},
-		{"Желтый", 255, 255, 0},
-		{"Фиолетовый", 255, 0, 255},
-		{"Выкл", 0, 0, 0},
-	}
-
-	for _, color := range colors {
-		btn := widget.NewButton(color.name, func(r, g, b byte) func() {
-			return func() {
-				e.block.Parameters["red"] = r
-				e.block.Parameters["green"] = g
-				e.block.Parameters["blue"] = b
-
-				redSlider.Value = float64(r)
-				greenSlider.Value = float64(g)
-				blueSlider.Value = float64(b)
-
-				redValueLabel.SetText(fmt.Sprintf("%d", r))
-				greenValueLabel.SetText(fmt.Sprintf("%d", g))
-				blueValueLabel.SetText(fmt.Sprintf("%d", b))
-
-				e.notifyChange()
-			}
-		}(color.r, color.g, color.b))
-
-		btn.Importance = widget.LowImportance
-		quickColorsContainer.Add(btn)
-	}
-
-	// Кнопка теста
-	testButton := widget.NewButton("Тест светодиод", func() {
-		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
-			port := e.block.Parameters["port"].(byte)
-			red := e.block.Parameters["red"].(byte)
-			green := e.block.Parameters["green"].(byte)
-			blue := e.block.Parameters["blue"].(byte)
-
-			err := e.deviceMgr.SetLEDColor(port, red, green, blue)
-			if err != nil {
-				log.Printf("Ошибка теста светодиода: %v", err)
-				dialog.ShowError(fmt.Errorf("Ошибка теста светодиода: %v", err), e.window)
-			} else {
-				dialog.ShowInformation("Тест светодиода",
-					fmt.Sprintf("Светодиод на порту %d установлен в RGB(%d,%d,%d)", port, red, green, blue),
-					e.window)
-			}
-		} else {
-			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
-		}
-	})
-	testButton.Importance = widget.HighImportance
-
-	cont.Add(portLabel)
-	cont.Add(portSelect)
-	cont.Add(colorLabelWidget)
-	cont.Add(redLabelWidget)
-	cont.Add(redContainer)
-	cont.Add(greenLabelWidget)
-	cont.Add(greenContainer)
-	cont.Add(blueLabelWidget)
-	cont.Add(blueContainer)
-	cont.Add(quickColorsLabelWidget)
-	cont.Add(quickColorsContainer)
-	cont.Add(layout.NewSpacer())
-	cont.Add(container.NewCenter(testButton))
-}
-
-func (e *BlockEditor) buildLEDIndexUI(cont *fyne.Container) {
-	portLabel := widget.NewLabel("Порт светодиода:")
-	portSelect := widget.NewSelect([]string{"Порт 6 (встроенный)"}, func(selected string) {
-		e.block.Parameters["port"] = byte(6)
-		e.notifyChange()
-	})
-	portSelect.SetSelected("Порт 6 (встроенный)")
-	e.block.Parameters["port"] = byte(6)
-
-	colorExprLabel := widget.NewLabel("Цвет (индекс или выражение):")
-	colorExprEntry := widget.NewEntry()
-	if expr, ok := e.block.Parameters["colorExpr"].(string); ok {
-		colorExprEntry.SetText(expr)
-	} else {
-		colorExprEntry.SetText("")
-		e.block.Parameters["colorExpr"] = ""
-	}
-	colorExprEntry.SetPlaceHolder("Например: красный, 5, myColor")
-	colorExprEntry.OnChanged = func(text string) {
-		e.block.Parameters["colorExpr"] = text
-		e.notifyChange()
-	}
-
-	// Кнопки быстрых цветов
-	quickColorsLabel := widget.NewLabel("Быстрые цвета:")
-	quickColorsContainer := container.NewGridWithColumns(3)
-
-	colors := []struct {
-		name  string
-		index byte
-	}{
-		{"Розовый", LED_INDEX_PINK},
-		{"Фиолетовый", LED_INDEX_PURPLE},
-		{"Синий", LED_INDEX_BLUE},
-		{"Зелёный", LED_INDEX_GREEN},
-		{"Красный", LED_INDEX_RED},
-		{"Белый", LED_INDEX_WHITE},
-		{"Выкл", 0},
-	}
-
-	for _, col := range colors {
-		btn := widget.NewButton(col.name, func(idx byte, name string) func() {
-			return func() {
-				colorExprEntry.SetText(name)
-				e.block.Parameters["colorExpr"] = name
-				e.notifyChange()
-			}
-		}(col.index, col.name))
-		btn.Importance = widget.LowImportance
-		quickColorsContainer.Add(btn)
-	}
-
-	// Кнопка теста
-	testButton := widget.NewButton("Тест светодиод", func() {
-		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
-			port := e.block.Parameters["port"].(byte)
-			expr := e.block.Parameters["colorExpr"].(string)
-			// Упрощённое вычисление для теста
-			var colorIdx byte = 1
-			if expr != "" {
-				// Пробуем как число
-				if num, err := strconv.Atoi(expr); err == nil {
-					colorIdx = byte(num)
-				} else {
-					// Пробуем как название цвета
-					if idx, ok := NameToIndexColor[strings.ToLower(expr)]; ok {
-						colorIdx = idx
-					}
-				}
-			}
-			err := e.deviceMgr.SetLEDIndexColor(port, colorIdx)
-			if err != nil {
-				log.Printf("Ошибка теста светодиода: %v", err)
-				dialog.ShowError(fmt.Errorf("Ошибка теста светодиода: %v", err), e.window)
-			} else {
-				dialog.ShowInformation("Тест светодиода",
-					fmt.Sprintf("Светодиод на порту %d установлен в индекс %d", port, colorIdx),
-					e.window)
-			}
-		} else {
-			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
-		}
-	})
-	testButton.Importance = widget.HighImportance
-
-	cont.Add(portLabel)
-	cont.Add(portSelect)
-	cont.Add(colorExprLabel)
-	cont.Add(colorExprEntry)
-	cont.Add(quickColorsLabel)
-	cont.Add(quickColorsContainer)
-	cont.Add(layout.NewSpacer())
-	cont.Add(container.NewCenter(testButton))
-}
-
-// Вспомогательный метод для обновления UI при смене режима
-func (e *BlockEditor) updateLEDModeUI(cont *fyne.Container, mode byte) {
-	// Находим контейнер modeContainer (последний добавленный)
-	if len(cont.Objects) < 3 {
-		return
-	}
-	modeContainer, ok := cont.Objects[2].(*fyne.Container)
-	if !ok {
-		return
-	}
-	rgbContainer := container.NewVBox()
-	indexContainer := container.NewVBox()
-	e.buildLEDRGBUI(rgbContainer)
-	e.buildLEDIndexUI(indexContainer)
-
-	if mode == 1 {
-		modeContainer.Objects = []fyne.CanvasObject{indexContainer}
-	} else {
-		modeContainer.Objects = []fyne.CanvasObject{rgbContainer}
-	}
-	modeContainer.Refresh()
 }
 
 // addWaitControls добавляет элементы управления для блока ожидания
@@ -1021,6 +1003,7 @@ func (e *BlockEditor) addSimpleSensorControls(cont *fyne.Container, sensorType B
 	cont.Add(infoLabel)
 }
 
+// ------------------ Вспомогательный метод ------------------
 // notifyChange уведомляет об изменении блока
 func (e *BlockEditor) notifyChange() {
 	if e.onChange != nil {
