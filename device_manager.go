@@ -3,71 +3,48 @@ package main
 import (
 	"fmt"
 	"log"
-	"sync"
 	"time"
 )
 
-// DeviceManager управляет устройствами хаба.
+// DeviceManager управляет устройствами хаба, используя AppState как единственное хранилище.
 type DeviceManager struct {
-	hubMgr    *HubManager
-	devices   map[byte]*Device
-	devicesMu sync.RWMutex
-
-	deviceChangedCallback func(portID byte, device *Device)
+	hubMgr *HubManager
+	state  *AppState // ссылка на общее состояние
 }
 
 // NewDeviceManager создаёт новый менеджер устройств.
-func NewDeviceManager(hubMgr *HubManager) *DeviceManager {
+func NewDeviceManager(hubMgr *HubManager, state *AppState) *DeviceManager {
 	return &DeviceManager{
-		hubMgr:  hubMgr,
-		devices: make(map[byte]*Device),
+		hubMgr: hubMgr,
+		state:  state,
 	}
 }
 
-// AddOrUpdateDevice добавляет или обновляет устройство.
-func (dm *DeviceManager) AddOrUpdateDevice(device *Device) {
-	dm.devicesMu.Lock()
-	defer dm.devicesMu.Unlock()
-
-	dm.devices[device.PortID] = device
-
-	if dm.deviceChangedCallback != nil {
-		dm.deviceChangedCallback(device.PortID, device)
-	}
-}
-
-// GetDevice возвращает устройство по порту.
+// GetDevice возвращает устройство по порту из AppState.
 func (dm *DeviceManager) GetDevice(portID byte) (*Device, bool) {
-	dm.devicesMu.RLock()
-	defer dm.devicesMu.RUnlock()
-
-	device, exists := dm.devices[portID]
-	return device, exists
+	dev := dm.state.GetDevice(portID)
+	return dev, dev != nil
 }
 
-// GetConnectedDevices возвращает список подключенных устройств.
+// GetConnectedDevices возвращает список подключенных устройств из AppState.
 func (dm *DeviceManager) GetConnectedDevices() []*Device {
-	dm.devicesMu.RLock()
-	defer dm.devicesMu.RUnlock()
-
+	all := dm.state.GetAllDevices()
 	var connected []*Device
-	for _, device := range dm.devices {
-		if device.IsConnected {
-			connected = append(connected, device)
+	for _, dev := range all {
+		if dev.IsConnected {
+			connected = append(connected, dev)
 		}
 	}
 	return connected
 }
 
-// GetDevicesByType возвращает устройства определенного типа.
+// GetDevicesByType возвращает подключенные устройства определённого типа.
 func (dm *DeviceManager) GetDevicesByType(deviceType byte) []*Device {
-	dm.devicesMu.RLock()
-	defer dm.devicesMu.RUnlock()
-
+	all := dm.state.GetAllDevices()
 	var filtered []*Device
-	for _, device := range dm.devices {
-		if device.DeviceType == deviceType && device.IsConnected {
-			filtered = append(filtered, device)
+	for _, dev := range all {
+		if dev.DeviceType == deviceType && dev.IsConnected {
+			filtered = append(filtered, dev)
 		}
 	}
 	return filtered
@@ -79,10 +56,11 @@ func (dm *DeviceManager) SetMotorPower(portID byte, power int8, duration uint16)
 		return fmt.Errorf("не подключено к хабу")
 	}
 
-	device, exists := dm.GetDevice(portID)
-	if !exists {
-		log.Printf("Устройство на порту %d не найдено в DeviceManager", portID)
-	} else if !device.IsConnected {
+	// Проверяем наличие устройства (опционально)
+	dev, _ := dm.GetDevice(portID)
+	if dev == nil {
+		log.Printf("Устройство на порту %d не найдено в AppState, но команда будет отправлена", portID)
+	} else if !dev.IsConnected {
 		log.Printf("Устройство на порту %d существует, но не подключено", portID)
 	}
 
@@ -156,11 +134,12 @@ func (dm *DeviceManager) SetLEDColor(portID byte, red, green, blue byte) error {
 		return fmt.Errorf("не подключено к хабу")
 	}
 
-	device, exists := dm.GetDevice(portID)
-	if !exists && portID != PortBuiltInLED {
-		log.Printf("Устройство на порту %d не найдено", portID)
-	} else if exists && !device.IsConnected && portID != PortBuiltInLED {
-		return fmt.Errorf("устройство на порту %d не подключено", portID)
+	// Проверяем наличие устройства, но для встроенного светодиода (порт 6) не обязательно
+	if portID != PortBuiltInLED {
+		dev, _ := dm.GetDevice(portID)
+		if dev == nil || !dev.IsConnected {
+			return fmt.Errorf("устройство на порту %d не подключено", portID)
+		}
 	}
 
 	// Настройка режима RGB
@@ -180,8 +159,9 @@ func (dm *DeviceManager) PlayTone(portID byte, frequency uint16, duration uint16
 		return fmt.Errorf("не подключено к хабу")
 	}
 
-	device, exists := dm.GetDevice(portID)
-	if !exists || !device.IsConnected || device.DeviceType != DEVICE_TYPE_PIEZO_TONE {
+	// Проверяем наличие пищалки
+	dev, _ := dm.GetDevice(portID)
+	if dev == nil || !dev.IsConnected || dev.DeviceType != DEVICE_TYPE_PIEZO_TONE {
 		return fmt.Errorf("пищалка не подключена к порту %d", portID)
 	}
 
@@ -196,8 +176,9 @@ func (dm *DeviceManager) PlayToneAndWait(portID byte, frequency uint16, duration
 		return fmt.Errorf("не подключено к хабу")
 	}
 
-	_, exists := dm.GetDevice(portID)
-	if !exists {
+	// Проверка необязательна, но для совместимости оставим
+	dev, _ := dm.GetDevice(portID)
+	if dev == nil {
 		log.Printf("Предупреждение: устройство на порту %d не найдено, но попытка воспроизведения будет выполнена", portID)
 	}
 
@@ -225,25 +206,9 @@ func (dm *DeviceManager) StopTone(portID byte) error {
 	return dm.hubMgr.WriteCharacteristic(OUTPUT_COMMAND_UUID, cmd)
 }
 
-// SetDeviceChangedCallback устанавливает callback.
-func (dm *DeviceManager) SetDeviceChangedCallback(callback func(portID byte, device *Device)) {
-	dm.deviceChangedCallback = callback
-}
-
-// UpdateDeviceValue обновляет значение устройства.
+// UpdateDeviceValue обновляет значение датчика в AppState.
 func (dm *DeviceManager) UpdateDeviceValue(portID byte, value interface{}) {
-	dm.devicesMu.Lock()
-	device, exists := dm.devices[portID]
-	if exists {
-		device.LastValue = value
-		device.LastUpdate = time.Now()
-	}
-	dm.devicesMu.Unlock()
-
-	// Вызываем callback после разблокировки мьютекса
-	if exists && dm.deviceChangedCallback != nil {
-		dm.deviceChangedCallback(portID, device)
-	}
+	dm.state.UpdateDeviceValue(portID, value)
 }
 
 // ForceDetectAllDevices принудительно запускает обнаружение через HubManager.

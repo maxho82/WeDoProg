@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // AppState хранит всё разделяемое состояние приложения, доступ к которому
 // может осуществляться из нескольких горутин (например, callback'и Bluetooth).
@@ -78,6 +81,17 @@ func (s *AppState) UpdateDevice(port byte, device *Device) {
 	}
 	devCopy := *device
 	s.connectedDevices[port] = &devCopy
+}
+
+// UpdateDeviceValue обновляет только значение и время последнего обновления устройства.
+// Используется для датчиков, чтобы не перезаписывать всю структуру.
+func (s *AppState) UpdateDeviceValue(port byte, value interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if dev, ok := s.connectedDevices[port]; ok {
+		dev.LastValue = value
+		dev.LastUpdate = time.Now()
+	}
 }
 
 func (s *AppState) RemoveDevice(port byte) {

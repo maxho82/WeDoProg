@@ -41,29 +41,23 @@ func (w *ValencePointWidget) CreateRenderer() fyne.WidgetRenderer {
 func (w *ValencePointWidget) Tapped(e *fyne.PointEvent) {
 	log.Printf("Левый клик по валентной точке %d", w.point.ID)
 
-	// Вставляем блок в эту точку
 	success := w.manager.InsertBlockAtPoint(w.point)
 	if success {
-		// Получаем ссылку на GUI для обновления состояния
 		gui := w.manager.programPanel.gui
 
-		// Очищаем все точки после успешной вставки
 		w.manager.ClearPoints()
-
-		// Отключаем режим вставки в programPanel
 		w.manager.programPanel.isInsertMode = false
 		w.manager.programPanel.insertBlockType = 0
 
-		// Обновляем GUI в главном потоке
 		fyne.Do(func() {
-			// Скрываем кнопку отмены в GUI
-			if gui != nil && gui.insertCancelButton != nil {
-				gui.insertCancelButton.Hide()
+			// Скрываем кнопку отмены через BlocksPalette
+			if gui != nil && gui.blocksPalette != nil {
+				gui.blocksPalette.ShowCancelButton(false)
 			}
 
 			// Обновляем состояние кнопок блоков
-			if gui != nil {
-				gui.updateBlockButtonsState()
+			if gui != nil && gui.blocksPalette != nil {
+				gui.blocksPalette.UpdateButtonsState(false)
 			}
 
 			// Обновляем панель инструментов
@@ -80,26 +74,21 @@ func (w *ValencePointWidget) Tapped(e *fyne.PointEvent) {
 func (w *ValencePointWidget) TappedSecondary(e *fyne.PointEvent) {
 	log.Println("Правый клик по валентной точке - отмена")
 
-	// Получаем ссылку на GUI для обновления состояния
 	gui := w.manager.programPanel.gui
 
-	// Очищаем все точки
 	w.manager.ClearPoints()
-
-	// Отключаем режим вставки в programPanel
 	w.manager.programPanel.isInsertMode = false
 	w.manager.programPanel.insertBlockType = 0
 
-	// Обновляем GUI в главном потоке
 	fyne.Do(func() {
-		// Скрываем кнопку отмены в GUI
-		if gui != nil && gui.insertCancelButton != nil {
-			gui.insertCancelButton.Hide()
+		// Скрываем кнопку отмены через BlocksPalette
+		if gui != nil && gui.blocksPalette != nil {
+			gui.blocksPalette.ShowCancelButton(false)
 		}
 
 		// Обновляем состояние кнопок блоков
-		if gui != nil {
-			gui.updateBlockButtonsState()
+		if gui != nil && gui.blocksPalette != nil {
+			gui.blocksPalette.UpdateButtonsState(false)
 		}
 
 		// Обновляем панель инструментов
@@ -107,7 +96,7 @@ func (w *ValencePointWidget) TappedSecondary(e *fyne.PointEvent) {
 			gui.updateToolbarState()
 		}
 
-		log.Println("Режим вставки отключен после успешной вставки блока")
+		log.Println("Режим вставки отключен после отмены")
 	})
 }
 

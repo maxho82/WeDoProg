@@ -160,7 +160,6 @@ func (p *ProgramPanel) AddBlockAtPosition(block *ProgramBlock, afterBlockID int)
 	}
 }
 
-// CancelInsertMode отменяет режим вставки.
 func (p *ProgramPanel) CancelInsertMode() {
 	p.isInsertMode = false
 	p.insertBlockType = 0
@@ -171,7 +170,9 @@ func (p *ProgramPanel) CancelInsertMode() {
 	log.Println("Режим вставки отменен")
 	if p.gui != nil {
 		p.gui.updateToolbarState()
-		p.gui.updateBlockButtonsState()
+		// Было: p.gui.updateBlockButtonsState()
+		// Теперь обращаемся к блоку палитры:
+		p.gui.blocksPalette.UpdateButtonsState(false)
 	}
 }
 

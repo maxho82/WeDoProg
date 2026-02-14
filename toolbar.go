@@ -38,14 +38,9 @@ func (t *Toolbar) GetContainer() fyne.CanvasObject {
 }
 
 // UpdateState обновляет состояние кнопок панели инструментов.
-func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool) {
-	isInInsertMode := false
-	if t.gui != nil && t.gui.programPanel != nil {
-		isInInsertMode = t.gui.programPanel.IsInsertMode()
-	}
-
+func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool, isInsertMode bool) {
 	if t.runButton != nil && t.stopButton != nil {
-		if isInInsertMode {
+		if isInsertMode {
 			t.runButton.Disable()
 			t.stopButton.Disable()
 		} else if isConnected && hasProgram && !isRunning {
@@ -61,7 +56,7 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 	}
 
 	if t.saveButton != nil && t.exportButton != nil {
-		if hasProgram && !isInInsertMode {
+		if hasProgram && !isInsertMode {
 			t.saveButton.Enable()
 			t.exportButton.Enable()
 		} else {
@@ -71,7 +66,7 @@ func (t *Toolbar) UpdateState(isConnected bool, hasProgram bool, isRunning bool)
 	}
 
 	if t.clearButton != nil {
-		if isInInsertMode || !hasProgram {
+		if isInsertMode || !hasProgram {
 			t.clearButton.Disable()
 		} else {
 			t.clearButton.Enable()
@@ -105,7 +100,7 @@ func (t *Toolbar) buildUI() *fyne.Container {
 				dialog.ShowError(err, t.gui.window)
 			} else {
 				log.Println("Программа успешно запущена")
-				t.UpdateState(true, true, true)
+				t.UpdateState(true, true, true, false)
 			}
 		}
 	})
