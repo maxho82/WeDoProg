@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -25,6 +27,7 @@ const (
 	BlockTypeVoltageSensor
 	BlockTypeCurrentSensor
 	BlockTypeStop
+	BlockTypeVariable
 )
 
 // ProgramState состояние выполнения программы
@@ -87,6 +90,15 @@ type ProgramManager struct {
 	stateChangeCB    func(state ProgramState)
 	currentBlockCB   func(blockID int)
 	programChangedCB func() // callback для уведомления об изменении программы
+
+	variables map[string]VariableValue
+	varsMutex sync.RWMutex
+}
+
+// VariableValue представляет значение переменной с типом
+type VariableValue struct {
+	Type  string // "bool", "int", "string"
+	Value interface{}
 }
 
 // NewProgramManager создаёт менеджер программ
@@ -95,6 +107,8 @@ func NewProgramManager(hubMgr *HubManager, deviceMgr *DeviceManager, state *AppS
 		hubMgr:    hubMgr,
 		deviceMgr: deviceMgr,
 		state:     state,
+		variables: make(map[string]VariableValue),
+		varsMutex: sync.RWMutex{},
 	}
 }
 
@@ -396,7 +410,7 @@ func (pm *ProgramManager) RunProgram() error {
 	if !hasStop {
 		return fmt.Errorf("программа должна содержать блок 'Стоп'")
 	}
-
+	pm.clearVariables() // очистка переменнх
 	pm.state.SetProgramState(ProgramStateRunning)
 	pm.notifyStateChange()
 	log.Println("Запуск программы...")
@@ -441,6 +455,50 @@ func (pm *ProgramManager) notifyStateChange() {
 }
 
 // --- Вспомогательные методы для выполнения ---
+
+// Методы для работы с переменными
+func (pm *ProgramManager) SetVariable(name string, val VariableValue) {
+	pm.varsMutex.Lock()
+	defer pm.varsMutex.Unlock()
+	pm.variables[name] = val
+}
+
+func (pm *ProgramManager) GetVariable(name string) (VariableValue, bool) {
+	pm.varsMutex.RLock()
+	defer pm.varsMutex.RUnlock()
+	val, ok := pm.variables[name]
+	return val, ok
+}
+
+// Очистка переменных перед запуском
+func (pm *ProgramManager) clearVariables() {
+	pm.varsMutex.Lock()
+	defer pm.varsMutex.Unlock()
+	pm.variables = make(map[string]VariableValue)
+}
+
+// ------------------------------------------------------------------------------
+
+// EvaluateExpression вычисляет строку выражения в контексте текущих переменных
+func (pm *ProgramManager) EvaluateExpression(expr string) (interface{}, error) {
+	if expr == "" {
+		return nil, nil
+	}
+	node, err := ParseExpression(expr)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка парсинга выражения: %v", err)
+	}
+	// Копируем переменные для безопасности
+	varsCopy := make(map[string]VariableValue)
+	pm.varsMutex.RLock()
+	for k, v := range pm.variables {
+		varsCopy[k] = v
+	}
+	pm.varsMutex.RUnlock()
+	return node.Evaluate(varsCopy)
+}
+
+//------------------------------------------------------------------------------
 
 // executeProgram выполняет программу.
 func (pm *ProgramManager) executeProgram(startBlock *ProgramBlock) {
@@ -666,18 +724,41 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 		block.Title = "Светодиод"
 		block.Description = "Управление светодиодом"
 		block.Parameters["port"] = byte(6)
+		block.Parameters["mode"] = byte(0) // 0 - RGB, 1 - индексный
 		block.Parameters["red"] = byte(255)
 		block.Parameters["green"] = byte(0)
 		block.Parameters["blue"] = byte(0)
+		block.Parameters["colorExpr"] = ""
 		block.OnExecute = func() error {
 			if !pm.hubMgr.IsConnected() {
 				return fmt.Errorf("не подключено к хабу")
 			}
 			port := block.Parameters["port"].(byte)
-			red := block.Parameters["red"].(byte)
-			green := block.Parameters["green"].(byte)
-			blue := block.Parameters["blue"].(byte)
-			return pm.deviceMgr.SetLEDColor(port, red, green, blue)
+			mode := block.Parameters["mode"].(byte)
+			if mode == 0 {
+				red := block.Parameters["red"].(byte)
+				green := block.Parameters["green"].(byte)
+				blue := block.Parameters["blue"].(byte)
+				return pm.deviceMgr.SetLEDColor(port, red, green, blue)
+			} else {
+				expr, _ := block.Parameters["colorExpr"].(string)
+				if expr == "" {
+					// по умолчанию розовый
+					return pm.deviceMgr.SetLEDIndexColor(port, 1)
+				}
+				// вычисляем выражение
+				result, err := pm.EvaluateExpression(expr)
+				if err != nil {
+					return fmt.Errorf("ошибка вычисления цвета: %v", err)
+				}
+				// конвертируем в цвет
+				conv, err := pm.convertValue(VarTypeColor, result)
+				if err != nil {
+					return err
+				}
+				colorIdx := conv.(byte)
+				return pm.deviceMgr.SetLEDIndexColor(port, colorIdx)
+			}
 		}
 	case BlockTypeWait:
 		block.Title = "Ждать"
@@ -788,6 +869,52 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			pm.StopProgram()
 			return nil
 		}
+	case BlockTypeVariable:
+		block.Title = "Переменная"
+		block.Description = "Объявление переменной"
+		block.Parameters["name"] = "var"
+		block.Parameters["varType"] = "int"
+		block.Parameters["expression"] = ""
+		block.OnExecute = func() error {
+			name, ok := block.Parameters["name"].(string)
+			if !ok || name == "" {
+				return fmt.Errorf("имя переменной не задано")
+			}
+			varType, _ := block.Parameters["varType"].(string)
+			expr, _ := block.Parameters["expression"].(string)
+
+			var rawVal interface{}
+			if expr == "" {
+				// значение по умолчанию
+				switch varType {
+				case "bool":
+					rawVal = false
+				case "int":
+					rawVal = 0
+				case "string":
+					rawVal = ""
+				case VarTypeColor:
+					rawVal = byte(0)
+				default:
+					return fmt.Errorf("неизвестный тип переменной: %s", varType)
+				}
+			} else {
+				// вычисляем выражение
+				result, err := pm.EvaluateExpression(expr)
+				if err != nil {
+					return fmt.Errorf("ошибка вычисления выражения для переменной %s: %v", name, err)
+				}
+				rawVal = result
+			}
+			// конвертируем в целевой тип
+			converted, err := pm.convertValue(varType, rawVal)
+			if err != nil {
+				return err
+			}
+			pm.SetVariable(name, VariableValue{Type: varType, Value: converted})
+			log.Printf("Переменная %s = %v (%s)", name, converted, varType)
+			return nil
+		}
 	}
 }
 
@@ -821,4 +948,142 @@ func getBlockColor(blockType BlockType) string {
 	default:
 		return "#607D8B"
 	}
+}
+
+// ----конвертация переменных
+// convertValue конвертирует значение val в целевой тип targetType
+func (pm *ProgramManager) convertValue(targetType string, val interface{}) (interface{}, error) {
+	// Допустимые индексы цветов (включая 0 как "выключено")
+	validColorIndices := []byte{0, 0x01, 0x02, 0x03, 0x05, 0x09, 0x0A}
+
+	// поиск ближайшего индекса
+	nearestColorIndex := func(x int) byte {
+		if x <= 0 {
+			return 0
+		}
+		best := validColorIndices[0]
+		bestDist := abs(x - int(best))
+		for _, idx := range validColorIndices[1:] {
+			dist := abs(x - int(idx))
+			if dist < bestDist {
+				bestDist = dist
+				best = idx
+			}
+		}
+		return best
+	}
+
+	switch targetType {
+	case "bool":
+		switch v := val.(type) {
+		case bool:
+			return v, nil
+		case int, int64, float64:
+			num := toInt(v)
+			return num != 0, nil
+		case string:
+			return v != "", nil
+		default:
+			return false, nil
+		}
+
+	case "int":
+		switch v := val.(type) {
+		case bool:
+			if v {
+				return 1, nil
+			}
+			return 0, nil
+		case int:
+			return v, nil
+		case int64:
+			return int(v), nil
+		case float64:
+			return int(v), nil
+		case string:
+			if num, err := strconv.Atoi(v); err == nil {
+				return num, nil
+			}
+			return 0, nil
+		default:
+			return 0, nil
+		}
+
+	case "string":
+		switch v := val.(type) {
+		case bool:
+			if v {
+				return "Да", nil
+			}
+			return "Нет", nil
+		case int:
+			return strconv.Itoa(v), nil
+		case int64:
+			return strconv.FormatInt(v, 10), nil
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64), nil
+		case string:
+			return v, nil
+		case byte:
+			if name, ok := IndexColorNames[v]; ok {
+				return name, nil
+			}
+			return strconv.Itoa(int(v)), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+
+	case VarTypeColor: // "color"
+		switch v := val.(type) {
+		case bool:
+			if v {
+				return byte(1), nil // розовый
+			}
+			return byte(0), nil
+		case int:
+			return nearestColorIndex(v), nil
+		case int64:
+			return nearestColorIndex(int(v)), nil
+		case float64:
+			return nearestColorIndex(int(v)), nil
+		case string:
+			// сначала по имени цвета
+			if idx, ok := colorNameToIndex(v); ok {
+				return idx, nil
+			}
+			// затем как число
+			if num, err := strconv.Atoi(v); err == nil {
+				return nearestColorIndex(num), nil
+			}
+			return byte(0), nil
+		case byte:
+			return nearestColorIndex(int(v)), nil
+		default:
+			return byte(0), nil
+		}
+
+	default:
+		return nil, fmt.Errorf("неизвестный тип переменной: %s", targetType)
+	}
+}
+
+// toInt преобразует различные числовые типы в int
+func toInt(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	default:
+		return 0
+	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

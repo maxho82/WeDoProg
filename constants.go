@@ -20,11 +20,11 @@ const (
 
 // Длительности по умолчанию (в миллисекундах или секундах)
 const (
-	DefaultMotorDurationMs   = 1000
-	DefaultWaitDurationSec   = 1.0
-	DefaultToneDurationMs    = 1000
-	DefaultToneFrequencyHz   = 440
-	DefaultLoopCount         = 5
+	DefaultMotorDurationMs = 1000
+	DefaultWaitDurationSec = 1.0
+	DefaultToneDurationMs  = 1000
+	DefaultToneFrequencyHz = 440
+	DefaultLoopCount       = 5
 )
 
 // Границы масштабирования
@@ -40,17 +40,20 @@ const (
 
 // Идентификаторы для коллбэков (используются в AppState)
 const (
-	CallbackIDBattery     = "battery"
-	CallbackIDHubInfo     = "hubInfo"
-	CallbackIDDevice      = "device"
-	CallbackIDConnection  = "connection"
+	CallbackIDBattery      = "battery"
+	CallbackIDHubInfo      = "hubInfo"
+	CallbackIDDevice       = "device"
+	CallbackIDConnection   = "connection"
 	CallbackIDProgramState = "programState"
 	CallbackIDCurrentBlock = "currentBlock"
 )
 
 // Размеры отступов и толщины линий
 const (
-	LineStrokeWidthNormal = 2.0
+	LineStrokeWidthNormal      = 2.0
 	LineStrokeWidthHighlighted = 3.0
-	LineStrokeWidthExecuting = 4.0
+	LineStrokeWidthExecuting   = 4.0
 )
+
+// Тип переменной "Цвет" (индексный цвет Lego)
+const VarTypeColor = "color"

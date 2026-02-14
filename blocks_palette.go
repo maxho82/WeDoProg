@@ -59,8 +59,9 @@ func (bp *BlocksPalette) buildUI() {
 		blocks []BlockType
 	}{
 		{"Логика", []BlockType{BlockTypeWait, BlockTypeLoopStart, BlockTypeCondition}},
-		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound}},
+		{"Действия", []BlockType{BlockTypeMotor, BlockTypeLED, BlockTypeSound, BlockTypeVariable}},
 		{"Датчики", []BlockType{BlockTypeTiltSensor, BlockTypeDistanceSensor, BlockTypeVoltageSensor, BlockTypeCurrentSensor}},
+		{"Переменные", []BlockType{BlockTypeVariable}},
 	}
 
 	for _, category := range categories {
@@ -137,6 +138,8 @@ func (bp *BlocksPalette) getBlockName(blockType BlockType) string {
 		return "Датчик тока"
 	case BlockTypeStop:
 		return "Стоп"
+	case BlockTypeVariable:
+		return "Переменная"
 	default:
 		return "Неизвестный блок"
 	}

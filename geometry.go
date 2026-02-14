@@ -10,7 +10,7 @@ import (
 type BlockShapeType int
 
 const (
-	ShapeRectangle       BlockShapeType = iota
+	ShapeRectangle BlockShapeType = iota
 	ShapeHexagon
 	ShapeHexagonInverted
 	ShapeEllipse
@@ -140,6 +140,8 @@ func getBlockIcon(blockType BlockType) string {
 		return "⚡"
 	case BlockTypeCurrentSensor:
 		return "🔌"
+	case BlockTypeVariable:
+		return "📦"
 	default:
 		return "◼"
 	}

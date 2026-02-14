@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -74,6 +75,8 @@ func (e *BlockEditor) buildUI() *fyne.Container {
 		e.addSoundControls(mainContainer)
 	case BlockTypeVoltageSensor, BlockTypeCurrentSensor:
 		e.addSimpleSensorControls(mainContainer, e.block.Type)
+	case BlockTypeVariable:
+		e.addVariableControls(mainContainer)
 	default:
 		// Для остальных блоков показываем базовую информацию
 		mainContainer.Add(widget.NewLabel(fmt.Sprintf("Тип: %s", e.block.Title)))
@@ -82,6 +85,93 @@ func (e *BlockEditor) buildUI() *fyne.Container {
 	}
 
 	return mainContainer
+}
+
+func (e *BlockEditor) addVariableControls(cont *fyne.Container) {
+	// Имя переменной
+	nameLabel := widget.NewLabel("Имя переменной:")
+	nameEntry := widget.NewEntry()
+	if name, ok := e.block.Parameters["name"].(string); ok {
+		nameEntry.SetText(name)
+	} else {
+		nameEntry.SetText("var")
+		e.block.Parameters["name"] = "var"
+	}
+	nameEntry.OnChanged = func(text string) {
+		e.block.Parameters["name"] = text
+		e.notifyChange()
+	}
+
+	// Тип переменной
+	typeLabel := widget.NewLabel("Тип:")
+	typeSelect := widget.NewSelect([]string{"bool", "int", "string", "color"}, func(selected string) {
+		e.block.Parameters["varType"] = selected
+		e.updateVariableValueUI(cont, selected)
+		e.notifyChange()
+	})
+	currentType, _ := e.block.Parameters["varType"].(string)
+	if currentType == "" {
+		currentType = "int"
+	}
+	typeSelect.SetSelected(currentType)
+
+	// Контейнер для поля ввода/выбора значения
+	valueContainer := container.NewVBox()
+	e.updateVariableValueUI(valueContainer, currentType)
+
+	infoLabel := widget.NewLabel("Если выражение пусто, переменная получит значение по умолчанию для типа.")
+	infoLabel.Wrapping = fyne.TextWrapWord
+
+	cont.Add(nameLabel)
+	cont.Add(nameEntry)
+	cont.Add(typeLabel)
+	cont.Add(typeSelect)
+	cont.Add(valueContainer)
+	cont.Add(infoLabel)
+}
+
+func (e *BlockEditor) updateVariableValueUI(cont *fyne.Container, varType string) {
+	cont.Objects = nil
+	switch varType {
+	case "bool":
+		boolSelect := widget.NewSelect([]string{"Да", "Нет"}, func(selected string) {
+			if selected == "Да" {
+				e.block.Parameters["expression"] = "true"
+			} else {
+				e.block.Parameters["expression"] = "false"
+			}
+			e.notifyChange()
+		})
+		// Устанавливаем текущее значение
+		if expr, ok := e.block.Parameters["expression"].(string); ok {
+			switch expr {
+			case "true":
+				boolSelect.SetSelected("Да")
+			case "false":
+				boolSelect.SetSelected("Нет")
+			default:
+				boolSelect.SetSelected("Нет")
+			}
+		} else {
+			boolSelect.SetSelected("Нет")
+			e.block.Parameters["expression"] = "false"
+		}
+		cont.Add(boolSelect)
+	case "int", "string", "color":
+		exprEntry := widget.NewEntry()
+		if expr, ok := e.block.Parameters["expression"].(string); ok {
+			exprEntry.SetText(expr)
+		} else {
+			exprEntry.SetText("")
+			e.block.Parameters["expression"] = ""
+		}
+		exprEntry.SetPlaceHolder("Например: 5 + x * 2")
+		exprEntry.OnChanged = func(text string) {
+			e.block.Parameters["expression"] = text
+			e.notifyChange()
+		}
+		cont.Add(exprEntry)
+	}
 }
 
 // addMotorControls добавляет элементы управления для мотора
@@ -191,8 +281,47 @@ func (e *BlockEditor) addMotorControls(cont *fyne.Container) {
 	cont.Add(container.NewCenter(testButton))
 }
 
-// addLEDControls добавляет элементы управления для светодиода
 func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
+	// Режим работы
+	modeLabel := widget.NewLabel("Режим:")
+	modeSelect := widget.NewSelect([]string{"RGB", "Индексный"}, func(selected string) {
+		mode := byte(0)
+		if selected == "Индексный" {
+			mode = 1
+		}
+		e.block.Parameters["mode"] = mode
+		e.updateLEDModeUI(cont, mode)
+		e.notifyChange()
+	})
+	currentMode, _ := e.block.Parameters["mode"].(byte)
+	if currentMode == 1 {
+		modeSelect.SetSelected("Индексный")
+	} else {
+		modeSelect.SetSelected("RGB")
+		e.block.Parameters["mode"] = byte(0)
+	}
+
+	// Контейнеры для разных режимов
+	rgbContainer := container.NewVBox()
+	indexContainer := container.NewVBox()
+
+	e.buildLEDRGBUI(rgbContainer)
+	e.buildLEDIndexUI(indexContainer)
+
+	modeContainer := container.NewMax()
+	if currentMode == 1 {
+		modeContainer.Objects = []fyne.CanvasObject{indexContainer}
+	} else {
+		modeContainer.Objects = []fyne.CanvasObject{rgbContainer}
+	}
+
+	cont.Add(modeLabel)
+	cont.Add(modeSelect)
+	cont.Add(modeContainer)
+}
+
+// buildLEDRGBUI добавляет элементы управления для светодиода RGB
+func (e *BlockEditor) buildLEDRGBUI(cont *fyne.Container) {
 	// Выбор порта
 	portLabel := widget.NewLabel("Порт светодиода:")
 	portSelect := widget.NewSelect([]string{"Порт 6 (встроенный)"}, func(selected string) {
@@ -350,6 +479,124 @@ func (e *BlockEditor) addLEDControls(cont *fyne.Container) {
 	cont.Add(quickColorsContainer)
 	cont.Add(layout.NewSpacer())
 	cont.Add(container.NewCenter(testButton))
+}
+
+func (e *BlockEditor) buildLEDIndexUI(cont *fyne.Container) {
+	portLabel := widget.NewLabel("Порт светодиода:")
+	portSelect := widget.NewSelect([]string{"Порт 6 (встроенный)"}, func(selected string) {
+		e.block.Parameters["port"] = byte(6)
+		e.notifyChange()
+	})
+	portSelect.SetSelected("Порт 6 (встроенный)")
+	e.block.Parameters["port"] = byte(6)
+
+	colorExprLabel := widget.NewLabel("Цвет (индекс или выражение):")
+	colorExprEntry := widget.NewEntry()
+	if expr, ok := e.block.Parameters["colorExpr"].(string); ok {
+		colorExprEntry.SetText(expr)
+	} else {
+		colorExprEntry.SetText("")
+		e.block.Parameters["colorExpr"] = ""
+	}
+	colorExprEntry.SetPlaceHolder("Например: красный, 5, myColor")
+	colorExprEntry.OnChanged = func(text string) {
+		e.block.Parameters["colorExpr"] = text
+		e.notifyChange()
+	}
+
+	// Кнопки быстрых цветов
+	quickColorsLabel := widget.NewLabel("Быстрые цвета:")
+	quickColorsContainer := container.NewGridWithColumns(3)
+
+	colors := []struct {
+		name  string
+		index byte
+	}{
+		{"Розовый", LED_INDEX_PINK},
+		{"Фиолетовый", LED_INDEX_PURPLE},
+		{"Синий", LED_INDEX_BLUE},
+		{"Зелёный", LED_INDEX_GREEN},
+		{"Красный", LED_INDEX_RED},
+		{"Белый", LED_INDEX_WHITE},
+		{"Выкл", 0},
+	}
+
+	for _, col := range colors {
+		btn := widget.NewButton(col.name, func(idx byte, name string) func() {
+			return func() {
+				colorExprEntry.SetText(name)
+				e.block.Parameters["colorExpr"] = name
+				e.notifyChange()
+			}
+		}(col.index, col.name))
+		btn.Importance = widget.LowImportance
+		quickColorsContainer.Add(btn)
+	}
+
+	// Кнопка теста
+	testButton := widget.NewButton("Тест светодиод", func() {
+		if e.deviceMgr != nil && e.deviceMgr.hubMgr != nil && e.deviceMgr.hubMgr.IsConnected() {
+			port := e.block.Parameters["port"].(byte)
+			expr := e.block.Parameters["colorExpr"].(string)
+			// Упрощённое вычисление для теста
+			var colorIdx byte = 1
+			if expr != "" {
+				// Пробуем как число
+				if num, err := strconv.Atoi(expr); err == nil {
+					colorIdx = byte(num)
+				} else {
+					// Пробуем как название цвета
+					if idx, ok := NameToIndexColor[strings.ToLower(expr)]; ok {
+						colorIdx = idx
+					}
+				}
+			}
+			err := e.deviceMgr.SetLEDIndexColor(port, colorIdx)
+			if err != nil {
+				log.Printf("Ошибка теста светодиода: %v", err)
+				dialog.ShowError(fmt.Errorf("Ошибка теста светодиода: %v", err), e.window)
+			} else {
+				dialog.ShowInformation("Тест светодиода",
+					fmt.Sprintf("Светодиод на порту %d установлен в индекс %d", port, colorIdx),
+					e.window)
+			}
+		} else {
+			dialog.ShowError(fmt.Errorf("Нет подключения к хабу"), e.window)
+		}
+	})
+	testButton.Importance = widget.HighImportance
+
+	cont.Add(portLabel)
+	cont.Add(portSelect)
+	cont.Add(colorExprLabel)
+	cont.Add(colorExprEntry)
+	cont.Add(quickColorsLabel)
+	cont.Add(quickColorsContainer)
+	cont.Add(layout.NewSpacer())
+	cont.Add(container.NewCenter(testButton))
+}
+
+// Вспомогательный метод для обновления UI при смене режима
+func (e *BlockEditor) updateLEDModeUI(cont *fyne.Container, mode byte) {
+	// Находим контейнер modeContainer (последний добавленный)
+	if len(cont.Objects) < 3 {
+		return
+	}
+	modeContainer, ok := cont.Objects[2].(*fyne.Container)
+	if !ok {
+		return
+	}
+	rgbContainer := container.NewVBox()
+	indexContainer := container.NewVBox()
+	e.buildLEDRGBUI(rgbContainer)
+	e.buildLEDIndexUI(indexContainer)
+
+	if mode == 1 {
+		modeContainer.Objects = []fyne.CanvasObject{indexContainer}
+	} else {
+		modeContainer.Objects = []fyne.CanvasObject{rgbContainer}
+	}
+	modeContainer.Refresh()
 }
 
 // addWaitControls добавляет элементы управления для блока ожидания

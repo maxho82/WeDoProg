@@ -36,6 +36,27 @@ const (
 	LED_INDEX_WHITE  = 0x0A // Белый
 )
 
+// Индексные цвета и их названия
+var IndexColorNames = map[byte]string{
+	LED_INDEX_PINK:   "Розовый",
+	LED_INDEX_PURPLE: "Фиолетовый",
+	LED_INDEX_BLUE:   "Синий",
+	LED_INDEX_GREEN:  "Зелёный",
+	LED_INDEX_RED:    "Красный",
+	LED_INDEX_WHITE:  "Белый",
+}
+
+// Обратное отображение для парсера
+var NameToIndexColor = map[string]byte{
+	"розовый":    LED_INDEX_PINK,
+	"фиолетовый": LED_INDEX_PURPLE,
+	"синий":      LED_INDEX_BLUE,
+	"зелёный":    LED_INDEX_GREEN,
+	"зеленый":    LED_INDEX_GREEN,
+	"красный":    LED_INDEX_RED,
+	"белый":      LED_INDEX_WHITE,
+}
+
 // DeviceTypeName возвращает имя типа устройства
 func DeviceTypeName(deviceType byte) string {
 	switch deviceType {

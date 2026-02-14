@@ -153,6 +153,21 @@ func (dm *DeviceManager) SetLEDColor(portID byte, red, green, blue byte) error {
 	return dm.hubMgr.WriteCharacteristic(OUTPUT_COMMAND_UUID, colorCmd)
 }
 
+// SetLEDIndexColor устанавливает цвет светодиода по индексу (режим 0)
+func (dm *DeviceManager) SetLEDIndexColor(portID byte, colorIndex byte) error {
+	if !dm.hubMgr.IsConnected() {
+		return fmt.Errorf("не подключено к хабу")
+	}
+	// Настройка режима индексного цвета (mode 0)
+	modeCmd := LPF2Protocol{}.EncodeLEDModeCommand(portID, 0x00)
+	if err := dm.hubMgr.WriteCharacteristic(INPUT_COMMAND_UUID, modeCmd); err != nil {
+		log.Printf("Предупреждение при установке режима светодиода: %v", err)
+	}
+	colorCmd := LPF2Protocol{}.EncodeLEDIndexCommand(portID, colorIndex)
+	log.Printf("Установка индексного цвета светодиода на порту %d: индекс %d", portID, colorIndex)
+	return dm.hubMgr.WriteCharacteristic(OUTPUT_COMMAND_UUID, colorCmd)
+}
+
 // PlayTone воспроизводит тон.
 func (dm *DeviceManager) PlayTone(portID byte, frequency uint16, duration uint16) error {
 	if !dm.hubMgr.IsConnected() {
