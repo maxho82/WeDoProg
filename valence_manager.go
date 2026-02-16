@@ -577,3 +577,83 @@ func minFloat32(a, b float32) float32 {
 	}
 	return b
 }
+
+// ShowMergePoints показывает точки, доступные для слияния после указанного условия.
+func (vm *ValenceManager) ShowMergePoints(conditionID int) {
+	vm.ClearPoints()
+	vm.selectedType = BlockTypeCondition // условно
+
+	program := vm.programPanel.programMgr.state.GetProgram()
+	if len(program.Blocks) == 0 {
+		return
+	}
+
+	// Находим индекс блока условия
+	condIndex := -1
+	for i, b := range program.Blocks {
+		if b.ID == conditionID {
+			condIndex = i
+			break
+		}
+	}
+	if condIndex == -1 {
+		return
+	}
+
+	// Добавляем точки между всеми парами блоков, начиная с пары (условие, следующий)
+	for i := condIndex + 1; i < len(program.Blocks); i++ {
+		prev := program.Blocks[i-1]
+		current := program.Blocks[i]
+		vm.addMergePointBetween(prev, current)
+	}
+
+	// Если последний блок не "Стоп", добавляем точку после него (на случай вставки в конец)
+	lastBlock := program.Blocks[len(program.Blocks)-1]
+	if lastBlock.Type != BlockTypeStop {
+		vm.addMergePointAfter(lastBlock)
+	}
+
+	vm.refreshDisplay()
+}
+
+// addMergePointBetween создаёт точку слияния между двумя блоками (тип ValenceInsertBetween).
+func (vm *ValenceManager) addMergePointBetween(prev, next *ProgramBlock) {
+	prevWidget := vm.programPanel.GetBlockWidget(prev.ID)
+	nextWidget := vm.programPanel.GetBlockWidget(next.ID)
+	if prevWidget == nil || nextWidget == nil {
+		return
+	}
+
+	pos1 := prevWidget.GetBottomConnectorPosition()
+	pos2 := nextWidget.GetTopConnectorPosition()
+	pos := fyne.NewPos((pos1.X+pos2.X)/2, (pos1.Y+pos2.Y)/2)
+
+	point := &ValencePoint{
+		ID:         len(vm.points),
+		Position:   pos,
+		InsertType: ValenceInsertBetween, // переиспользуем существующий тип
+		FromBlock:  prev,
+		ToBlock:    next,
+	}
+	vm.points = append(vm.points, point)
+	vm.addPointWidget(point)
+}
+
+// addMergePointAfter создаёт точку после последнего блока.
+func (vm *ValenceManager) addMergePointAfter(block *ProgramBlock) {
+	widget := vm.programPanel.GetBlockWidget(block.ID)
+	if widget == nil {
+		return
+	}
+	pos := widget.GetBottomConnectorPosition()
+
+	point := &ValencePoint{
+		ID:         len(vm.points),
+		Position:   pos,
+		InsertType: ValenceInsertEnd,
+		FromBlock:  block,
+		ToBlock:    nil,
+	}
+	vm.points = append(vm.points, point)
+	vm.addPointWidget(point)
+}

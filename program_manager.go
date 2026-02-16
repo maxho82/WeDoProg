@@ -60,7 +60,9 @@ type ProgramBlock struct {
 	Width        float64
 	Height       float64
 	Parameters   map[string]interface{}
-	NextBlockID  int
+	NextBlockID  int // ID блока для ветки «Да» (было просто следующим)
+	ElseBlockID  int // ID первого блока ветки «Ложь»
+	OutBlockID   int // ID блока, с которого продолжается выполнение по
 	IsStart      bool
 	Color        string
 	OnExecute    func() error
@@ -70,6 +72,11 @@ type ProgramBlock struct {
 type Connection struct {
 	FromBlockID int
 	ToBlockID   int
+}
+
+// Контекст условия
+type ConditionContext struct {
+	JoinBlockID int // куда перейти после завершения текущей ветки
 }
 
 // LoopContext контекст выполнения цикла
@@ -790,9 +797,15 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 		}
 	case BlockTypeCondition:
 		block.Title = "Условие"
-		block.Description = "Условный оператор"
+		block.Description = "Ветвление"
+		block.Parameters = make(map[string]interface{})
+		block.Parameters["expression"] = "" // строка с условием
+		block.NextBlockID = 0
+		block.ElseBlockID = 0
+		block.OutBlockID = 0
 		block.OnExecute = func() error {
-			log.Println("Проверка условия")
+			// Позже здесь будет вычисление выражения
+			log.Printf("Выполняется условие (ID=%d)", block.ID)
 			return nil
 		}
 	case BlockTypeTiltSensor:
@@ -916,6 +929,27 @@ func (pm *ProgramManager) configureBlock(block *ProgramBlock) {
 			return nil
 		}
 	}
+}
+
+// SetOutBlock устанавливает ID блока, после которого происходит слияние ветвей условия.
+func (pm *ProgramManager) SetOutBlock(conditionID, outBlockID int) {
+	prog := pm.state.GetProgram()
+	for _, block := range prog.Blocks {
+		if block.ID == conditionID {
+			block.OutBlockID = outBlockID
+			// Если ветви ещё не заданы, по умолчанию направляем их к точке слияния
+			if block.NextBlockID == 0 {
+				block.NextBlockID = outBlockID
+			}
+			if block.ElseBlockID == 0 {
+				block.ElseBlockID = outBlockID
+			}
+			break
+		}
+	}
+	pm.state.SetProgram(prog)
+	pm.rebuildConnectionsFromBlocks() // перестроит соединения с учётом новых связей
+	pm.notifyProgramChanged()
 }
 
 // getBlockColor возвращает цвет для типа блока.

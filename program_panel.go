@@ -29,6 +29,12 @@ type ProgramPanel struct {
 	insertPairFirst  *ProgramBlock
 	insertPairSecond *ProgramBlock
 
+	// для если
+	isMergeMode             bool                      // режим выбора точки слияния
+	mergeConditionID        int                       // ID блока условия, для которого выбирается слияние
+	altConnections          map[int][]*ConnectionLine // ключ - ID блока условия // специальные линии для альтернативных ветвей
+	pendingMergeConditionID int                       // ID условия, для которого нужно включить режим слияния после перерисовки
+
 	lastConnectorPositions map[int]fyne.Position
 }
 
@@ -50,6 +56,7 @@ func NewProgramPanel(gui *MainGUI, programMgr *ProgramManager) *ProgramPanel {
 		scale:                  1.0,
 		isInsertMode:           false,
 		lastConnectorPositions: make(map[int]fyne.Position),
+		altConnections:         make(map[int][]*ConnectionLine),
 	}
 
 	panel.layout = NewProgramLayout(programMgr, panel)
@@ -87,6 +94,15 @@ func (p *ProgramPanel) ReloadFromProgram() {
 	// Очищаем текущее содержимое
 	p.content.Objects = nil
 	p.connections = make([]*ConnectionLine, 0)
+
+	// Удаляем старые альтернативные линии
+	for _, lines := range p.altConnections {
+		for _, conn := range lines {
+			p.content.Remove(conn.line)
+		}
+	}
+	p.altConnections = make(map[int][]*ConnectionLine)
+
 	p.blockWidgets = make(map[int]*DraggableBlock)
 	p.lastConnectorPositions = make(map[int]fyne.Position)
 
@@ -98,12 +114,21 @@ func (p *ProgramPanel) ReloadFromProgram() {
 		p.blockWidgets[block.ID] = blockWidget
 	}
 
-	// Восстанавливаем соединения из программы
+	// Восстанавливаем обычные соединения
 	for _, conn := range prog.Connections {
 		p.createVisualConnection(conn.FromBlockID, conn.ToBlockID)
 	}
 
+	// Восстанавливаем альтернативные линии для условий
+	p.rebuildAlternativeLines()
+
 	p.content.Refresh()
+
+	// Если есть ожидающий режим слияния, активируем его
+	if p.pendingMergeConditionID != 0 {
+		p.StartMergePointSelection(p.pendingMergeConditionID)
+		p.pendingMergeConditionID = 0
+	}
 }
 
 // SetInsertMode устанавливает режим вставки одного блока.
@@ -158,6 +183,19 @@ func (p *ProgramPanel) AddBlockAtPosition(block *ProgramBlock, afterBlockID int)
 	if p.isInsertMode {
 		p.CancelInsertMode()
 	}
+
+	// Если это блок условия, устанавливаем ожидание режима слияния
+	if block.Type == BlockTypeCondition && p.gui != nil {
+		p.pendingMergeConditionID = block.ID
+		// Показываем подсказку в статусной строке
+		p.gui.statusLabel.SetText("Выберите точку слияния для ветвей условия")
+		p.gui.statusLabel.Refresh()
+	}
+
+	// Принудительно обновляем layout, чтобы позиции блоков стали актуальными
+	p.content.Layout.Layout(p.content.Objects, p.content.Size())
+	p.lastConnectorPositions = make(map[int]fyne.Position)
+
 }
 
 func (p *ProgramPanel) CancelInsertMode() {
@@ -298,10 +336,10 @@ func (p *ProgramPanel) ResetHighlight() {
 
 // updateConnections обновляет позиции всех соединений.
 func (p *ProgramPanel) updateConnections() {
+	// Обновляем обычные соединения (как и раньше)
 	for _, conn := range p.connections {
 		fromWidget, fromExists := p.blockWidgets[conn.fromBlockID]
 		toWidget, toExists := p.blockWidgets[conn.toBlockID]
-
 		if fromExists && toExists {
 			fromPos := fromWidget.GetBottomConnectorPosition()
 			toPos := toWidget.GetTopConnectorPosition()
@@ -327,9 +365,74 @@ func (p *ProgramPanel) updateConnections() {
 			p.lastConnectorPositions[toKey] = toPos
 		}
 	}
-	p.valenceOverlay.Refresh()
+
+	// Обновляем альтернативные линии для всех условий
+	prog := p.programMgr.state.GetProgram()
+	for _, block := range prog.Blocks {
+		if block.Type == BlockTypeCondition && block.OutBlockID != 0 && block.OutBlockID != block.NextBlockID {
+			p.updateAlternativeLines(block)
+		}
+	}
 }
 
+// drawAlternativeBranch рисует ветвь «Ложь» для блока условия.
+/* func (p *ProgramPanel) drawAlternativeBranch(condition *ProgramBlock) {
+	fromWidget := p.blockWidgets[condition.ID]
+	toWidget := p.blockWidgets[condition.OutBlockID]
+	if fromWidget == nil || toWidget == nil {
+		return
+	}
+
+	scale := p.scale
+
+	// Вычисляем позиции (как и раньше)
+	fromPos := fromWidget.Position()
+	fromSize := fromWidget.Size()
+	toPos := toWidget.Position()
+	toSize := toWidget.Size()
+
+	offsetX := fromSize.Width * 1.5
+
+	topX := fromPos.X + fromSize.Width + offsetX
+	topY := fromPos.Y + fromSize.Height/2
+	bottomX := toPos.X + toSize.Width + offsetX
+	bottomY := toPos.Y + toSize.Height/2
+
+	// Если линии ещё не созданы — создаём и сохраняем
+	if len(p.altConnections) == 0 {
+		horLine1 := canvas.NewLine(color.NRGBA{R: 255, G: 100, B: 100, A: 255})
+		vertLine := canvas.NewLine(color.NRGBA{R: 255, G: 100, B: 100, A: 255})
+		horLine2 := canvas.NewLine(color.NRGBA{R: 255, G: 100, B: 100, A: 255})
+
+		p.altConnections = []*ConnectionLine{
+			{line: horLine1},
+			{line: vertLine},
+			{line: horLine2},
+		}
+
+		for _, conn := range p.altConnections {
+			p.content.Add(conn.line)
+		}
+	}
+
+	// Обновляем позиции существующих линий
+	if len(p.altConnections) >= 3 {
+		p.altConnections[0].line.Position1 = fyne.NewPos(fromPos.X+fromSize.Width, fromPos.Y+fromSize.Height/2)
+		p.altConnections[0].line.Position2 = fyne.NewPos(topX, topY)
+
+		p.altConnections[1].line.Position1 = fyne.NewPos(topX, topY)
+		p.altConnections[1].line.Position2 = fyne.NewPos(bottomX, bottomY)
+
+		p.altConnections[2].line.Position1 = fyne.NewPos(bottomX, bottomY)
+		p.altConnections[2].line.Position2 = fyne.NewPos(toPos.X, toPos.Y+toSize.Height/2)
+
+		// Устанавливаем толщину с учётом масштаба
+		for _, conn := range p.altConnections {
+			conn.line.StrokeWidth = 2 * scale
+		}
+	}
+}
+*/
 // Clear очищает холст.
 func (p *ProgramPanel) Clear() {
 	p.content.Objects = nil
@@ -423,5 +526,117 @@ func (p *ProgramPanel) scrollToBlock(block *ProgramBlock) {
 
 		p.scroll.Offset = fyne.NewPos(offsetX, offsetY)
 		p.scroll.Refresh()
+	}
+}
+
+// StartMergePointSelection переводит панель в режим выбора точки слияния для указанного условия.
+func (p *ProgramPanel) StartMergePointSelection(conditionID int) {
+	// Убедимся, что все виджеты имеют актуальные позиции
+	p.content.Layout.Layout(p.content.Objects, p.content.Size())
+
+	p.isMergeMode = true
+	p.mergeConditionID = conditionID
+	p.valenceManager.ShowMergePoints(conditionID)
+	p.valenceOverlay.Refresh()
+	log.Printf("Режим выбора точки слияния для условия %d", conditionID)
+}
+
+// CancelMergeMode отменяет режим слияния.
+func (p *ProgramPanel) CancelMergeMode() {
+	p.isMergeMode = false
+	p.mergeConditionID = 0
+	p.valenceManager.ClearPoints()
+	p.valenceOverlay.Refresh()
+}
+
+// ensureAlternativeLines создаёт линии для конкретного условия, если их ещё нет
+func (p *ProgramPanel) ensureAlternativeLines(conditionID int) {
+	// Если линии уже есть для этого условия, ничего не делаем
+	if _, exists := p.altConnections[conditionID]; exists {
+		return
+	}
+	condition := p.programMgr.state.FindBlockByID(conditionID)
+	if condition == nil || condition.OutBlockID == 0 {
+		return
+	}
+	fromWidget := p.blockWidgets[condition.ID]
+	toWidget := p.blockWidgets[condition.OutBlockID]
+	if fromWidget == nil || toWidget == nil {
+		return
+	}
+
+	// Создаём три линии
+	horLine1 := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255}) // синий
+	vertLine := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
+	horLine2 := canvas.NewLine(color.NRGBA{R: 0, G: 150, B: 255, A: 255})
+
+	lines := []*ConnectionLine{
+		{line: horLine1},
+		{line: vertLine},
+		{line: horLine2},
+	}
+
+	// Сохраняем в карту по ID условия
+	p.altConnections[conditionID] = lines
+
+	// Добавляем в контейнер
+	for _, conn := range lines {
+		p.content.Add(conn.line)
+	}
+
+	// Сразу обновим позиции
+	p.updateAlternativeLines(condition)
+}
+
+// updateAlternativeLines обновляет позиции линий для указанного условия
+func (p *ProgramPanel) updateAlternativeLines(condition *ProgramBlock) {
+	lines, ok := p.altConnections[condition.ID]
+	if !ok || len(lines) < 3 {
+		return
+	}
+	fromWidget := p.blockWidgets[condition.ID]
+	toWidget := p.blockWidgets[condition.OutBlockID]
+	if fromWidget == nil || toWidget == nil {
+		return
+	}
+
+	scale := p.scale
+	fromPos := fromWidget.Position()
+	fromSize := fromWidget.Size()
+	toPos := toWidget.Position()
+	toSize := toWidget.Size()
+
+	offsetX := fromSize.Width * 1.5
+
+	topX := fromPos.X + fromSize.Width + offsetX
+	topY := fromPos.Y + fromSize.Height/2
+	bottomX := toPos.X + toSize.Width + offsetX
+	bottomY := toPos.Y + toSize.Height/2
+
+	// Горизонталь от условия к вертикали
+	lines[0].line.Position1 = fyne.NewPos(fromPos.X+fromSize.Width, fromPos.Y+fromSize.Height/2)
+	lines[0].line.Position2 = fyne.NewPos(topX, topY)
+
+	// Вертикальная линия
+	lines[1].line.Position1 = fyne.NewPos(topX, topY)
+	lines[1].line.Position2 = fyne.NewPos(bottomX, bottomY-fromSize.Height/1.5)
+
+	// Горизонталь от вертикали к точке слияния
+	lines[2].line.Position1 = fyne.NewPos(bottomX, bottomY-fromSize.Height/1.5)
+	lines[2].line.Position2 = fyne.NewPos(bottomX-fromSize.Width*2, bottomY-fromSize.Height/1.5) //toWidget.GetTopConnectorPosition()
+
+	for _, conn := range lines {
+		conn.line.StrokeWidth = 2 * scale
+		conn.line.Refresh()
+	}
+}
+
+// rebuildAlternativeLines создаёт линии для всех блоков условия с OutBlockID
+func (p *ProgramPanel) rebuildAlternativeLines() {
+	prog := p.programMgr.state.GetProgram()
+	for _, block := range prog.Blocks {
+		if block.Type == BlockTypeCondition && block.OutBlockID != 0 && block.OutBlockID != block.NextBlockID {
+			p.ensureAlternativeLines(block.ID)
+		}
 	}
 }

@@ -41,6 +41,50 @@ func (w *ValencePointWidget) CreateRenderer() fyne.WidgetRenderer {
 func (w *ValencePointWidget) Tapped(e *fyne.PointEvent) {
 	log.Printf("Левый клик по валентной точке %d", w.point.ID)
 
+	if w.manager.programPanel.isMergeMode {
+		// Режим выбора точки слияния
+		conditionID := w.manager.programPanel.mergeConditionID
+		var outBlockID int
+		switch w.point.InsertType {
+		case ValenceInsertBetween:
+			outBlockID = w.point.ToBlock.ID
+		case ValenceInsertEnd:
+			outBlockID = 0 // 0 означает конец программы (нет следующего блока)
+		default:
+			// другие типы точек не должны появляться в этом режиме
+			return
+		}
+
+		// Устанавливаем OutBlockID для условия
+		w.manager.programPanel.programMgr.SetOutBlock(conditionID, outBlockID)
+
+		// После установки OutBlockID
+		w.manager.programPanel.ensureAlternativeLines(conditionID)
+
+		// Выходим из режима слияния
+		w.manager.programPanel.CancelMergeMode()
+
+		// Обновляем отображение, чтобы появилась альтернативная ветвь
+		w.manager.programPanel.ReloadFromProgram()
+
+		// Разблокируем палитру и кнопки через GUI
+		gui := w.manager.programPanel.gui
+		if gui != nil {
+			fyne.Do(func() {
+				if gui.blocksPalette != nil {
+					gui.blocksPalette.ShowCancelButton(false)
+					gui.blocksPalette.UpdateButtonsState(false)
+				}
+				gui.updateToolbarState()
+			})
+		}
+
+		log.Printf("Точка слияния установлена для условия %d: OutBlockID = %d", conditionID, outBlockID)
+		return
+	}
+
+	// Обычный режим вставки блока
+
 	success := w.manager.InsertBlockAtPoint(w.point)
 	if success {
 		gui := w.manager.programPanel.gui

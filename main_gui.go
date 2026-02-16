@@ -588,3 +588,12 @@ func (gui *MainGUI) handleSpaceKey() {
 func (gui *MainGUI) createToolbar() {
 	gui.toolbar = NewToolbar(gui)
 }
+
+/* // startMergeMode вызывается после вставки блока условия для выбора точки слияния.
+func (gui *MainGUI) startMergeMode(conditionID int) {
+	gui.programPanel.StartMergePointSelection(conditionID)
+	// Можно также показать подсказку в статусной строке
+	gui.statusLabel.SetText("Выберите точку слияния для ветвей условия")
+	gui.statusLabel.Refresh()
+}
+*/

@@ -720,8 +720,26 @@ func (e *BlockEditor) addLoopEndControls(cont *fyne.Container) {
 
 // addConditionControls добавляет элементы управления для условного оператора
 func (e *BlockEditor) addConditionControls(cont *fyne.Container) {
-	infoLabel := widget.NewLabel("Блок условия.\nВ будущих версиях здесь будут настройки условий.")
+	exprLabel := widget.NewLabel("Условие (выражение, результат bool):")
+	exprEntry := widget.NewEntry()
+	if expr, ok := e.block.Parameters["expression"].(string); ok {
+		exprEntry.SetText(expr)
+	} else {
+		exprEntry.SetText("")
+		e.block.Parameters["expression"] = ""
+	}
+	exprEntry.SetPlaceHolder("например, x > 5")
+	exprEntry.OnChanged = func(text string) {
+		e.block.Parameters["expression"] = text
+		e.notifyChange()
+	}
+
+	infoLabel := widget.NewLabel("После настройки блока выберите точку слияния ветвей.")
 	infoLabel.Wrapping = fyne.TextWrapWord
+
+	cont.Add(exprLabel)
+	cont.Add(exprEntry)
+	cont.Add(widget.NewSeparator())
 	cont.Add(infoLabel)
 }
 
